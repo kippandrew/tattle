@@ -51,65 +51,102 @@ class TCPClient(object):
 
 
 class TCPListener(TCPServer):
-    def __init__(self, listen_address=None, custom_ioloop=None):
+    def __init__(self, custom_ioloop=None):
+        # initialize super class
+        super(TCPListener, self).__init__(io_loop=custom_ioloop)
+
+    def listen(self, port, address="", callback=None):
+        pass
+
+    def handle_stream(self, stream, address):
         pass
 
 
 class UDPListener(object):
-    def __init__(self, listen_address=None, custom_ioloop=None):
-        self._socket = self._create_socket(listen_address)
+    def __init__(self, custom_ioloop=None):
+        self._socket = self._create_socket()
         self._state = None
-        self._read_future = None
-        self._read_timeout = None
-        self._write_future = None
+        self._read_callback = None
         self._read_bytes = None
+        self._read_timeout = None
+        self._listen_callback = None
         self._ioloop = custom_ioloop or ioloop.IOLoop.current()
 
-    def _create_socket(self, listen_address):
+    def _create_socket(self):
         udpsock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         udpsock.setblocking(False)
-        if listen_address is not None:
-            udpsock.bind(listen_address)
         return udpsock
 
-    @property
-    def local_address(self):
-        return self._socket.getsockname()
-
-    @property
-    def peer_address(self):
-        return self._socket.getpeername()
-
-    def sendto(self, data, addr):
+    def listen(self, port, address="", callback=None):
         """
-        Send data
-        :param data:
+        Listen for data and invoke the callback when it arrives
+        :param port:
+        :param address:
+        :param callback:
         :return:
         """
-        return self._socket.sendto(data, addr)
+        assert self._listen_callback is None, "Already listening"
+        self._listen_callback = callback
+        self._socket.bind((address, port))
 
-    def recvfrom(self, max_bytes=4096, timeout=5):
+    def start(self):
         """
-        Receive data
-        :param timeout:
-        :param max_bytes:
-        :return: Future
+        Start the listener
+        :return:
         """
-        future = self._set_read_future()
-        self._read_bytes = max_bytes
-        if timeout > 0:
-            self._read_timeout = self._ioloop.add_timeout(time.time() + timeout, self._handle_read_timeout)
-        self._add_io_state(self._ioloop.READ)
-        return future
+        assert self._listen_callback is not None, "Not listening"
+
+        def _process_packet(result):
+            if result is None:
+                return
+            try:
+                self._listen_callback(result)
+            except Exception:
+                LOG.exception("Error running callback")
+
+            # wait for data
+            self._ioloop.add_future(self.recvfrom(), callback)
+
+        # wait for data
+        self._ioloop.add_future(self.recvfrom(), self._listen_callback)
+
+    def stop(self):
+        """
+        Stop the listener
+        :return:
+        """
+        self._listen_callback = None
+        self.close()
 
     def close(self):
         """
-        Clone connection
+        Close connection
         :return:
         """
         self._ioloop.remove_handler(self._socket.fileno())
         self._socket.close()
         self._socket = None
+
+    def sendto(self, data, addr):
+        """
+        Send data
+        :param data:
+        :param addr:
+        :return:
+        """
+        return self._socket.sendto(data, addr)
+
+    def recvfrom(self, max_buffer_size=4096, timeout=5, callback=None):
+        """
+        Receive data
+        :param max_buffer_size:
+        :return: Future
+        """
+        self._set_read_callback(callback)
+        self._read_bytes = max_buffer_size
+        if timeout > 0:
+            self._read_timeout = self._ioloop.add_timeout(time.time() + timeout, self._handle_read_timeout)
+        self._add_io_state(self._ioloop.READ)
 
     def _add_io_state(self, state):
         if self._state is None:
@@ -119,50 +156,64 @@ class UDPListener(object):
             self._state = self._state | state
             self._ioloop.update_handler(self._socket.fileno(), self._state)
 
-    def _set_read_future(self):
-        assert self._read_future is None, "Already reading"
-        self._read_future = concurrent.TracebackFuture()
-        return self._read_future
+    def _set_read_callback(self, callback):
+        assert self._read_callback is None, "Already reading"
+        self._read_callback = callback
 
-    def _resolve_read_future(self, result):
-        assert self._read_future is not None, "Not running"
-        future = self._read_future
-        self._read_future = None
-        future.set_result(result)
+    def _run_read_callback(self, *args, **kwargs):
+        assert self._read_callback is not None, "Not reading"
+        callback = self._read_callback
+        self._read_callback = None
+        try:
+            callback(*args, **kwargs)
+        except Exception:
+            LOG.exception("Error running read callback")
 
     def _handle_read_timeout(self):
-        if self._read_future is not None:
-            future = self._read_future
-            self._read_future = None
-            future.set_exception(ioloop.TimeoutError)
+        """
+        handle_read_timeout is called when a timeout occurs reading data from the socket
+        """
+        if self._read_callback is not None:
+            self._run_read_callback(None)
+        LOG.error("Timeout reading data")
 
-    def _handle_read_error(self):
-        if self._read_future is not None:
-            future = self._read_future
-            self._read_future = None
-            future.set_exc_info(sys.exc_info())
-            # XXX close socket?
+    def _handle_read_error(self, error):
+        """
+        handle_read_error is called when an error occurs reading data from the socket
+        """
+        if self._read_callback is not None:
+            self._run_read_callback(None)
+        LOG.error("Error reading data: %s", error)
 
     def _handle_read(self):
-        # clear timeout
-        if self._read_timeout:
-            self._ioloop.remove_timeout(self._read_timeout)
+        """
+        handle_read is called when the ioloop reports data is available on the socket (READ)
+        """
+        try:
+            # clear timeout
+            if self._read_timeout:
+                self._ioloop.remove_timeout(self._read_timeout)
 
-        if self._read_future:
-            try:
-                data, addr = self._socket.recvfrom(self._read_bytes)
-            except socket.error as e:
-                if e.args[0] in _ERRNO_WOULDBLOCK:
+            if self._read_callback:
+                try:
+                    data, addr = self._socket.recvfrom(self._read_bytes)
+                except socket.error as e:
+                    if e.args[0] in _ERRNO_WOULDBLOCK:
+                        return
+                    else:
+                        self._handle_read_error(e)
+                        return
+                if not data:
+                    self.close()
                     return
-                else:
-                    self._handle_read_error()
-                    return
-            if not data:
-                self.close()
-                return
 
-            # resolve read future
-            self._resolve_read_future((data, addr))
+                # run the read callback
+                self._run_read_callback((data, addr))
+
+        except Exception:
+            LOG.exception("Error handling read")
+
+        # self.recvfrom(self._listen_callback)
 
     def _handle_events(self, fd, events):
         if events & self._ioloop.READ:
