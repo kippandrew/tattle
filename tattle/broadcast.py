@@ -1,6 +1,12 @@
 from tattle import logging
 
-class Queue(object):
+LOG = logging.get_logger(__name__)
 
+
+class Queue(object):
     def push(self, message, callback=None):
         pass
+
+
+class MessageBroadcaster(object):
+    pass

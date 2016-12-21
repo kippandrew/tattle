@@ -11,6 +11,8 @@ class Configuration(object):
     node_port = None
     bind_address = None
     bind_port = None
+    api_address = None
+    api_port = None
     probe_interval = None
     probe_timeout = None
     gossip_interval = None
@@ -25,6 +27,8 @@ class Configuration(object):
 class DefaultConfiguration(Configuration):
     bind_address = '127.0.0.1'
     bind_port = 7878
+    api_address = '127.0.0.1'
+    api_port = 7800
     probe_interval = 1000
     probe_timeout = 200
     gossip_interval = 100
@@ -33,4 +37,5 @@ class DefaultConfiguration(Configuration):
 
 
 def init_config():
-    pass
+    return DefaultConfiguration()
+

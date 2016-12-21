@@ -25,7 +25,7 @@ def init_logger():
     handler.setLevel(logging.DEBUG)
     logger.setLevel(logging.NOTSET)
     logger.addHandler(handler)
-
+    return logger
 
 class ConsoleFormatter(logging.Formatter):
     BLACK, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, WHITE = range(8)

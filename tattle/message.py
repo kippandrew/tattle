@@ -9,6 +9,14 @@ from tattle import logging
 LOG = logging.get_logger(__name__)
 
 
+class MessageError(Exception):
+    pass
+
+
+class MessageChecksumError(MessageError):
+    pass
+
+
 class MessageBase(object):
     _fields_ = []
 
@@ -44,7 +52,23 @@ class MessageBase(object):
         for f in self.__class__.get_fields():
             attr = getattr(self, f[0])
             d[f[0]] = attr
-        return "<%s %s>" % (self.__class__.__name__, d)
+        return "<%s %s>" % (self.__class__.__name__, dict(d))
+
+    def __eq__(self, other):
+        """Override the default equals behavior"""
+        if isinstance(other, self.__class__):
+            return self.__dict__ == other.__dict__
+        return NotImplemented
+
+    def __ne__(self, other):
+        """Define a non-equality test"""
+        if isinstance(other, self.__class__):
+            return not self.__eq__(other)
+        return NotImplemented
+
+    def __hash__(self):
+        """Override the default hash behavior"""
+        return hash(tuple(sorted(self.__dict__.items())))
 
     @classmethod
     def get_fields(cls):
@@ -61,14 +85,14 @@ class MessageBase(object):
 
 
 class Message(MessageBase):
-
     def __init__(self, *args, **kwargs):
         super(Message, self).__init__(*args, **kwargs)
 
 
 class PingMessage(Message):
     _fields_ = [
-        "seq"
+        "seq",
+        "node"
     ]
 
     @classmethod

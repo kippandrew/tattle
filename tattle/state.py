@@ -1,5 +1,12 @@
 from tattle import logging
 
+__all__ = [
+    'NodeState',
+    'NODE_STATUS_ALIVE',
+    'NODE_STATUS_DEAD',
+    'NODE_STATUS_SUSPECT'
+]
+
 NODE_STATUS_ALIVE = 'alive'
 NODE_STATUS_SUSPECT = 'suspect'
 NODE_STATUS_DEAD = 'dead'

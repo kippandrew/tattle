@@ -1,4 +1,5 @@
-import tests
+from tests import fixture
 
-class AbstractClusterTestCase(tests.AbstractTestCase):
+
+class AbstractClusterTestCase(fixture.AbstractTestCase):
     pass

@@ -1,12 +1,17 @@
 import socket
+import struct
 import time
 import errno
 import sys
+import binascii
 
 from tornado import concurrent
+from tornado import gen
 from tornado import ioloop
+from tornado.tcpserver import TCPServer
 
 from tattle import logging
+from tattle import message
 
 LOG = logging.get_logger(__name__)
 
@@ -24,7 +29,28 @@ if hasattr(errno, "WSAECONNRESET"):
     _ERRNO_CONNRESET += (errno.WSAECONNRESET, errno.WSAECONNABORTED, errno.WSAETIMEDOUT)
 
 
-class TCPListener(object):
+def encode_message(msg):
+    raw = message.serialize(msg)
+    calc = binascii.crc32(raw)
+    crc = struct.pack('!l', calc)
+    buf = crc + raw
+    return buf
+
+
+def decode_message(buf):
+    crc, = struct.unpack('!l', buf[0:4])  # first 4 bytes in (network) big-endian
+    buf = buf[4:]
+    expected = binascii.crc32(buf)
+    if crc != expected:
+        raise message.MessageChecksumError("Message checksum mismatch: 0x%X != 0x%X" % (crc, expected))
+    return message.deserialize(buf)
+
+
+class TCPClient(object):
+    pass
+
+
+class TCPListener(TCPServer):
     def __init__(self, listen_address=None, custom_ioloop=None):
         pass
 
@@ -71,7 +97,8 @@ class UDPListener(object):
         """
         future = self._set_read_future()
         self._read_bytes = max_bytes
-        self._read_timeout = self._ioloop.add_timeout(time.time() + timeout, self._handle_read_timeout)
+        if timeout > 0:
+            self._read_timeout = self._ioloop.add_timeout(time.time() + timeout, self._handle_read_timeout)
         self._add_io_state(self._ioloop.READ)
         return future
 
@@ -142,3 +169,81 @@ class UDPListener(object):
             self._handle_read()
         if events & self._ioloop.ERROR:
             LOG.error('%s event error' % self)
+
+
+class MessageListener(object):
+    """
+    The MessageListener class listens for messages via UDP/TCP and emits them via callback when they are received.
+    """
+
+    def __init__(self, udp_listener, tcp_listener, custom_ioloop=None):
+        """
+        Create new instance of the MessageListener class
+        :param udp_listener
+        :param tcp_listener
+        :param custom_ioloop:
+        """
+        self._udp_listener = udp_listener
+        self._tcp_listener = tcp_listener
+        self._io_loop = custom_ioloop or ioloop.IOLoop.current()
+        self._listen_callback = None
+        self._listen_future = None
+        self._closed = False
+
+    def listen(self, callback):
+        assert self._listen_future is None, "Already listening"
+
+        self._closed = False
+        self._listen_future = concurrent.TracebackFuture()
+        self._listen_callback = callback
+
+        self._listen_udp()
+        self._listen_tcp()
+
+        return self._listen_future
+
+    def close(self):
+        self._closed = True
+        self._udp_listener.close()
+        self._tcp_listener.close()
+
+        self._listen_future.result()
+
+    def _listen_udp(self):
+        self._io_loop.add_future(self._udp_listener.recvfrom(4096, timeout=0), self._handle_udp_read_future)
+
+    def _listen_tcp(self):
+        pass
+
+    def _handle_udp_read_future(self, future):
+        try:
+            error = future.exception()
+            if error is not None:
+                LOG.exception("Error reading UDP socket", exc_info=future.exc_info())
+                return
+
+            # get future result
+            data, addr = future.result()
+
+            # decode message
+            try:
+                msg = decode_message(data)
+                LOG.debug("Decoded message: %s", msg)
+            except message.MessageError as e:
+                LOG.error("Error decoding message: %s", e)
+                return
+
+            # execute callback
+            try:
+                self._listen_callback(msg, addr)
+            except Exception:
+                LOG.exception("Error running callback")
+
+        except Exception:
+            LOG.exception("Error handling UDP read")
+
+        # listen again
+        self._listen_udp()
+
+    def _handle_tcp_read_future(self, future):
+        pass

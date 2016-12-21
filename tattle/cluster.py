@@ -1,45 +1,46 @@
 import time
 
 from tornado import ioloop
+from tornado import gen
 
 from tattle import broadcast
-from tattle import config
+from tattle import logging
 from tattle import message
 from tattle import network
-from tattle import logging
-from tattle import sequence
 from tattle import state
+from tattle import utils
+
+__all__ = [
+    'Cluster'
+]
 
 LOG = logging.get_logger(__name__)
 
 
-class ClusterError(object):
-    pass
-
-
 class Cluster(object):
-    def __init__(self, config, io_loop=None):
+    def __init__(self, config, message_listener=None, message_broadcaster=None, custom_ioloop=None):
         """
         Create a new instance of the Cluster class
-        :type config: config.Configuration
+        :param config:
+        :param message_listener:
+        :param message_broadcaster:
+        :param custom_ioloop:
         """
         self.nodes = list()
         self.nodes_map = dict()
         self.config = config
-        self._sequence = sequence.Sequence()
-        self._incarnation = sequence.Sequence()
+        self._sequence = utils.Sequence()
+        self._incarnation = utils.Sequence()
         self._leaving = False
-        self._io_loop = io_loop or ioloop.IOLoop.current()
+        self._io_loop = custom_ioloop or ioloop.IOLoop.current()
 
-        # create network listeners
-        self._udp_listener = network.UDPListener((self.config.bind_address, self.config.bind_port), self._io_loop)
-        LOG.debug("Started UDPListener. Listening on udp %s:%d", self.config.bind_address, self.config.bind_port)
+        # init message listener
+        self._listener = message_listener or self._init_message_listener()
+        self._listener.listen(self._handle_message)
 
-        self._tcp_listener = network.TCPListener((self.config.bind_address, self.config.bind_port), self._io_loop)
-        LOG.debug("Started TCPListener. Listening on tcp %s:%d", self.config.bind_address, self.config.bind_port)
-
-        # setup broadcast queue
+        # init message broadcaster
         self._broadcast_queue = broadcast.Queue()
+        self._broadcast = message_broadcaster or self._init_message_broadcaster()
 
         # setup scheduled callbacks
         self._probe_scheduler = ioloop.PeriodicCallback(self._do_probe,
@@ -49,6 +50,26 @@ class Cluster(object):
         self._gossip_scheduler = ioloop.PeriodicCallback(self._do_gossip,
                                                          self.config.gossip_interval,
                                                          io_loop=self._io_loop)
+
+        LOG.debug("Initialized Cluster")
+
+    def _init_message_listener(self):
+
+        # init network listeners
+        self._udp_listener = network.UDPListener((self.config.bind_address, self.config.bind_port), self._io_loop)
+        LOG.debug("Started UDPListener. Listening on udp %s:%d", self.config.bind_address, self.config.bind_port)
+
+        self._tcp_listener = network.TCPListener((self.config.bind_address, self.config.bind_port), self._io_loop)
+        LOG.debug("Started TCPListener. Listening on tcp %s:%d", self.config.bind_address, self.config.bind_port)
+
+        # init message listener
+        listener = network.MessageListener(self._udp_listener,
+                                           self._tcp_listener,
+                                           self._io_loop)
+        return listener
+
+    def _init_message_broadcaster(self):
+        self._broadcast = broadcast.MessageBroadcaster()
 
     def _start_schedulers(self):
         self._probe_scheduler.start()
@@ -64,24 +85,27 @@ class Cluster(object):
         LOG.debug("Stopped gossip scheduler")
         self._gossip_scheduler.stop()
 
+    @gen.coroutine
     def run(self):
         """
         Create a cluster on this node.
         :return:
         """
+
         self._set_alive()
 
-        # start schedulers
         self._start_schedulers()
 
-    def join(self, *node_addresses):
+    @gen.coroutine
+    def join(self, *nodes):
         """
         Join a cluster.
-        :param node_list:
+        :param nodes:
         :return:
         """
         pass
 
+    @gen.coroutine
     def leave(self):
         """
         Leave a cluster.
@@ -89,6 +113,20 @@ class Cluster(object):
         """
         pass
 
+    @gen.coroutine
+    def sync(self, node):
+        """
+        Sync this node with another node.
+        :param node:
+        :return:
+        """
+        pass
+
+    @gen.coroutine
+    def ping(self, node):
+        pass
+
+    @gen.coroutine
     def shutdown(self):
         """
         Shutdown this node. This will cause this node to appear dead to other nodes.
@@ -97,9 +135,6 @@ class Cluster(object):
         self._stop_schedulers()
 
         LOG.info("Shut down")
-
-    def ping(self, node):
-        pass
 
     @property
     def members(self):
@@ -111,7 +146,22 @@ class Cluster(object):
     def _probe_node(self, node):
         pass
 
+    def _sync_node(self, node):
+        pass
+
     def _do_gossip(self):
+        pass
+
+    def _handle_message(self):
+        pass
+
+    def _handle_alive_message(self):
+        pass
+
+    def _handle_dead_message(self):
+        pass
+
+    def _handle_suspect_message(self):
         pass
 
     def _on_node_alive(self, new_state, bootstrap=True):
@@ -164,7 +214,7 @@ class Cluster(object):
 
         else:
             # queue broadcast message
-            self._broadcast_queue.push(message.AliveMessage.create(new_state.node,
+            self._broadcast_queue.push(message.AliveMessage.create(new_state.name,
                                                                    new_state.incarnation,
                                                                    new_state.address,
                                                                    new_state.port))
@@ -178,10 +228,10 @@ class Cluster(object):
         # TODO: metrics
         LOG.debug("Node is alive: %s", new_state.name)
 
-    def _on_node_suspect(self, node):
+    def _on_node_dead(self, node):
         pass
 
-    def _on_node_dead(self, node):
+    def _on_node_suspect(self, node):
         pass
 
     def _set_alive(self):
@@ -206,7 +256,7 @@ class Cluster(object):
         else:
             node_port = self._udp_listener.local_address[1]
 
-        # create NodeState
+        # create NodeState for this node
         current_node = state.NodeState(node_name,
                                        node_address,
                                        node_port,
