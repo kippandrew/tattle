@@ -1,16 +1,16 @@
 #!/usr/bin/env python2.7
-import sys
 import argparse
-import yaml
 
 from tornado import gen
+from tornado import httpserver
 from tornado import ioloop
 
 import tattle
 import tattle.logging
 import tattle.config
+import tattle.api
 
-LOG = tattle.logging.get_logger(__name__)
+LOG = tattle.logging.get_logger('tattled')
 
 
 def parse_arguments():
@@ -19,19 +19,27 @@ def parse_arguments():
 
 
 if __name__ == '__main__':
-
     # parse arguments
     args = parse_arguments()
 
     # init config
-    tattle.config.init_config()
+    config = tattle.config.init_config()
 
     # init logging
-    tattle.logging.init_logger()
+    logger = tattle.logging.init_logger()
 
-    # initialize the cluster
-    cluster = tattle.Cluster(tattle.config.DefaultConfiguration())
+    # initialize cluster
+    cluster = tattle.Cluster(config)
     cluster.run()
+
+    # initialize apI
+    server = tattle.api.APIServer(cluster)
+    server.run()
+
+    # start httpserver
+    http = httpserver.HTTPServer(server)
+    http.listen(config.api_port, address=config.api_address)
+    LOG.info("API server listening on %s:%s", config.api_address, config.api_port)
 
     # lets go!
     ioloop.IOLoop.instance().start()
