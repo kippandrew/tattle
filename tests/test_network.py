@@ -53,9 +53,8 @@ class AbstractNetworkTestCase(fixture.AbstractTestCase):
         self._next_port += 1
         return (socket.gethostbyname('localhost'), port)
 
-    def _create_udp_connection(self, bind_address='', bind_port=None):
+    def _create_udp_connection(self):
         peer = network.UDPConnection()
-        peer.bind(bind_address, bind_port)
         self.addCleanup(lambda: peer.close())  # automatically close the socket after tests run
         return peer
 
@@ -70,17 +69,30 @@ class AbstractNetworkTestCase(fixture.AbstractTestCase):
         self.addCleanup(lambda: listener.stop())  # automatically close the socket after tests run
         return listener
 
+    def _create_tcp_client(self):
+        client = network.TCPClient()
+        # self.addCleanup(lambda: client.close())  # automatically close the client after tests run
+        return client
+
+    def _create_tcp_listener(self, listen_address, listen_port):
+        listener = network.TCPListener()
+        listener.listen(listen_port, listen_address)
+        self.addCleanup(lambda: listener.stop())  # automatically close the socket after tests run
+        return listener
+
 
 class UDPConnectionTestCase(AbstractNetworkTestCase):
     @testing.gen_test(timeout=1)
     def test_send_and_recv(self):
         # create a connection to peer2 bound to peer1
         peer1_addr = self._get_available_local_address()
-        peer1 = self._create_udp_connection(*peer1_addr)
+        peer1 = self._create_udp_connection()
+        peer1.bind(*peer1_addr)
 
         # create a connection to peer1 bound to peer2
         peer2_addr = self._get_available_local_address()
-        peer2 = self._create_udp_connection(*peer2_addr)
+        peer2 = self._create_udp_connection()
+        peer2.bind(*peer2_addr)
 
         # send message from peer1 to peer2
         peer1.sendto('Foo Bar', *peer2_addr)
@@ -132,7 +144,8 @@ class UDPClientTestCase(AbstractNetworkTestCase):
         test_message = network.PingMessage()
 
         peer1_addr = self._get_available_local_address()
-        peer1 = self._create_udp_connection(*peer1_addr)
+        peer1 = self._create_udp_connection()
+        peer1.bind(*peer1_addr)
 
         client = self._create_udp_client()
         client.sendto(test_message, *peer1_addr)
@@ -152,15 +165,39 @@ class UDPListenerTestCase(AbstractListenerTestCase):
         listener = self._create_udp_listener(*listener_addr)
         listener.start(self._handle_message)
 
+        # create a UDPConnection
+        peer1 = self._create_udp_connection()
         peer1_addr = ('localhost', 12345)
-        peer1 = self._create_udp_connection(*peer1_addr)
-        peer1.connect(*listener_addr)
-        peer1.send(network.MessageEncoder.encode(test_message))
+        peer1.bind(*peer1_addr)
+
+        # send message to listener
+        peer1.sendto(network.MessageEncoder.encode(test_message), *listener_addr)
 
         yield gen.sleep(0.1)
 
         self.assertMessageReceived(test_message, peer1_addr)
 
 
-class TCPListenerTestCase(AbstractNetworkTestCase):
-    pass
+class TCPListenerTestCase(AbstractListenerTestCase):
+
+    @testing.gen_test
+    def test_receive_tcp_message(self):
+
+        test_message = network.PingMessage()
+
+        # configure a TCPListener
+        listener_addr = self._get_available_local_address()
+        listener = self._create_tcp_listener(*listener_addr)
+        listener.start(self._handle_message)
+
+        # create a TCPClient
+        client1 = self._create_tcp_client()
+        client1_addr = (client1.local_address, client1.local_port)
+        yield client1.connect(*listener_addr)
+
+        # send message to listener
+        yield client1.send(test_message)
+
+        yield gen.sleep(0.1)
+
+        self.assertMessageReceived(test_message, client1_addr)

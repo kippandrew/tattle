@@ -10,9 +10,11 @@ import time
 import msgpack
 
 from tornado import concurrent
+from tornado import gen
 from tornado import ioloop
-from tornado import tcpclient
+from tornado import iostream
 from tornado import tcpserver
+
 from tattle import logging
 
 __all__ = [
@@ -51,6 +53,8 @@ _ERRNO_CONNRESET = (errno.ECONNRESET, errno.ECONNABORTED, errno.EPIPE, errno.ETI
 if hasattr(errno, "WSAECONNRESET"):
     _ERRNO_CONNRESET += (errno.WSAECONNRESET, errno.WSAECONNABORTED, errno.WSAETIMEDOUT)
 
+HEADER_LENGTH = 9  # 4 for length, 1 for flags, 4 crc
+HEADER_FORMAT = '!IBl'
 
 class MessageError(Exception):
     pass
@@ -171,13 +175,17 @@ class MessageDecoder(object):
         return message
 
     @classmethod
+    def decode_header(cls, buf):
+        pass
+
+    @classmethod
     def decode(cls, buf):
         # TODO: encryption
         # TODO: compression
-        if len(buf) <= 8:
+        if len(buf) <= HEADER_LENGTH:
             raise MessageDecodeError("Message is too short")
-        length, crc, = struct.unpack('!Il', buf[0:8])  # unpack header in network B/O
-        buf = buf[8:]
+        length, flags, crc, = struct.unpack(HEADER_FORMAT, buf[0:HEADER_LENGTH])  # unpack header in network B/O
+        buf = buf[HEADER_LENGTH:]
         expected = binascii.crc32(buf)
         if crc != expected:
             raise MessageChecksumError("Message checksum mismatch: 0x%X != 0x%X" % (crc, expected))
@@ -209,8 +217,9 @@ class MessageEncoder(object):
         # TODO: compression
         raw = cls.serialize_message(msg)
         crc = binascii.crc32(raw)
-        length = len(raw) + 4 + 4  # 4 bytes length, 4 bytes for crc
-        header = struct.pack('!Il', length, crc)  # pack header in network B/O
+        flags = 0
+        length = len(raw) + HEADER_LENGTH
+        header = struct.pack(HEADER_FORMAT, length, flags, crc)  # pack header in network B/O
         return header + raw
 
 
@@ -262,8 +271,48 @@ class RefuteMessage(Message):
     pass
 
 
-class TCPClient(tcpclient.TCPClient):
-    pass
+class TCPClient(object):
+    """
+    The TCPClient sends messages via TCP
+    """
+
+    def __init__(self):
+        self._socket = self._create_socket()
+        self._stream = iostream.IOStream(self._socket)
+
+    def _create_socket(self):
+        tcpsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
+        tcpsock.setblocking(False)
+        return tcpsock
+
+    @property
+    def local_address(self):
+        return self._socket.getsockname()[0]
+
+    @property
+    def local_port(self):
+        return self._socket.getsockname()[1]
+
+    def connect(self, address, port):
+        """
+        Connect
+        :param address:
+        :param port:
+        :return: Future
+        """
+        return self._stream.connect((address, port))
+
+    def send(self, message):
+        """
+        Send a message
+        :param message:
+        :return: Future
+        """
+        return self._stream.write(MessageEncoder.encode(message))
+
+    def close(self):
+        if self._stream is not None and not self._stream._closed:
+            self._stream.close()
 
 
 class TCPListener(tcpserver.TCPServer):
@@ -284,9 +333,66 @@ class TCPListener(tcpserver.TCPServer):
         super(TCPListener, self).stop()
         self._message_callback = None
 
-    def handle_stream(self, stream, address):
-        pass
+    @gen.coroutine
+    def _read_message_header(self, stream, buf):
+        # read header
+        buf += yield stream.read_bytes(HEADER_LENGTH)
 
+        # read message
+        length, flags, crc = struct.unpack(HEADER_FORMAT, buf[0:HEADER_LENGTH])  # unpack header in network B/O
+        raise gen.Return((length - HEADER_LENGTH, buf))
+
+    @gen.coroutine
+    def _read_message(self, stream, length, buf):
+
+        # read message
+        buf += yield stream.read_bytes(length)
+
+        # decode message
+        try:
+            message = MessageDecoder.decode(buf)
+            LOG.debug("Decoded message: %s", message)
+        except MessageDecodeError as e:
+            LOG.error("Error decoding message: %s", e)
+            return
+
+        raise gen.Return(message)
+
+    @gen.coroutine
+    def handle_stream(self, stream, addr):
+        LOG.debug("Handing incoming TCP connection from: %s", addr)
+
+        # read until closed
+        while True:
+            try:
+
+                # create buffer
+                buf = bytes()
+
+                # read message header
+                length, buf = yield self._read_message_header(stream, buf)
+
+                # read message body
+                message = yield self._read_message(stream, length, buf)
+                if message is None:
+                    continue
+
+                # run callback
+                try:
+                    if self._message_callback is not None:
+                        LOG.debug("Handling message: %s from %s", message, addr)
+                        self._message_callback(message, addr)
+                except:
+                    LOG.exception("Error running callback")
+
+            except iostream.StreamClosedError:
+                return
+
+            except:
+                LOG.exception("Error reading stream")
+                stream.close()
+
+        LOG.debug("Finished handling TCP connection from: %s", addr)
 
 class UDPConnection(object):
     """
@@ -465,13 +571,34 @@ class UDPClient(object):
     def local_port(self):
         return self._connection.local_port
 
+    @gen.coroutine
     def connect(self, address, port):
+        """
+        Set default address and port for use with send
+        :param address:
+        :param port:
+        :return: Future
+        """
         self._connection.connect(address, port)
 
+    @gen.coroutine
     def send(self, message):
+        """
+        Send a message
+        :param message:
+        :return: Future
+        """
         self._connection.send(MessageEncoder.encode(message))
 
+    @gen.coroutine
     def sendto(self, message, address, port):
+        """
+        Send a message to a given address and port
+        :param message:
+        :param address:
+        :param port:
+        :return: Future
+        """
         self._connection.sendto(MessageEncoder.encode(message), address, port)
 
     def close(self):
@@ -531,15 +658,16 @@ class UDPListener(object):
 
             # decode message
             try:
-                msg = MessageDecoder.decode(data)
-                LOG.debug("Decoded message: %s", msg)
+                message = MessageDecoder.decode(data)
+                LOG.debug("Decoded message: %s", message)
             except MessageDecodeError as e:
                 LOG.error("Error decoding message: %s", e)
                 return
 
             try:
                 if self._message_callback is not None:
-                    self._message_callback(msg, addr)
+                    LOG.debug("Handling message: %s from %s", message, addr)
+                    self._message_callback(message, addr)
             except:
                 LOG.exception("Error running callback")
 
