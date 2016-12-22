@@ -5,7 +5,6 @@ from tornado import gen
 
 from tattle import broadcast
 from tattle import logging
-from tattle import message
 from tattle import network
 from tattle import state
 from tattle import utils
@@ -18,55 +17,63 @@ LOG = logging.get_logger(__name__)
 
 
 class Cluster(object):
-    def __init__(self, config, message_listener=None, message_broadcaster=None, custom_ioloop=None):
+    def __init__(self, config, udp_listener=None, udp_client=None, tcp_listener=None, tcp_client=None,
+                 message_broadcaster=None):
         """
         Create a new instance of the Cluster class
         :param config:
-        :param message_listener:
-        :param message_broadcaster:
+        :param udp_listener:
         :param custom_ioloop:
         """
         self.nodes = list()
         self.nodes_map = dict()
         self.config = config
-        self._sequence = utils.Sequence()
-        self._incarnation = utils.Sequence()
-        self._leaving = False
-        self._io_loop = custom_ioloop or ioloop.IOLoop.current()
+        self._ping_sequence = utils.Sequence()
+        self._incarnation_sequence = utils.Sequence()
 
-        # init message listener
-        self._listener = message_listener or self._init_message_listener()
-        self._listener.listen(self._handle_message)
+        # init listeners
+        self._udp_listener = udp_listener or self._init_listener_udp()
+        self._udp_listener.listen(self._handle_message)
 
-        # init message broadcaster
+        self._tcp_listener = tcp_listener or self._init_listener_tcp()
+        self._tcp_listener.listen(self._handle_message)
+
+        # init clients
+        self._udp_client = udp_client or self._init_client_udp()
+        self._tcp_client = tcp_client or self._init_client_tcp()
+
+        # init broadcaster
         self._broadcast_queue = broadcast.Queue()
         self._broadcast = message_broadcaster or self._init_message_broadcaster()
 
         # setup scheduled callbacks
         self._probe_scheduler = ioloop.PeriodicCallback(self._do_probe,
-                                                        self.config.probe_interval,
-                                                        io_loop=self._io_loop)
+                                                        self.config.probe_interval)
 
         self._gossip_scheduler = ioloop.PeriodicCallback(self._do_gossip,
-                                                         self.config.gossip_interval,
-                                                         io_loop=self._io_loop)
+                                                         self.config.gossip_interval)
 
         LOG.debug("Initialized Cluster")
 
-    def _init_message_listener(self):
-
-        # init network listeners
-        self._udp_listener = network.UDPListener((self.config.bind_address, self.config.bind_port), self._io_loop)
+    def _init_listener_udp(self):
+        udp_listener = network.UDPListener()
+        udp_listener.listen(self.config.bind_port, self.config.bind_address)
         LOG.debug("Started UDPListener. Listening on udp %s:%d", self.config.bind_address, self.config.bind_port)
+        return udp_listener
 
-        self._tcp_listener = network.TCPListener((self.config.bind_address, self.config.bind_port), self._io_loop)
+    def _init_listener_tcp(self):
+        tcp_listener = network.TCPListener()
+        tcp_listener.listen(self.config.bind_port, self.config.bind_address)
         LOG.debug("Started TCPListener. Listening on tcp %s:%d", self.config.bind_address, self.config.bind_port)
+        return tcp_listener
 
-        # init message listener
-        listener = network.MessageListener(self._udp_listener,
-                                           self._tcp_listener,
-                                           self._io_loop)
-        return listener
+    def _init_client_udp(self):
+        udp_client = network.UDPClient()
+        return udp_client
+
+    def _init_client_tcp(self):
+        tcp_client = network.TCPClient()
+        return tcp_client
 
     def _init_message_broadcaster(self):
         self._broadcast = broadcast.MessageBroadcaster()
@@ -260,7 +267,7 @@ class Cluster(object):
         current_node = state.NodeState(node_name,
                                        node_address,
                                        node_port,
-                                       incarnation=self._incarnation.increment())
+                                       incarnation=self._incarnation_sequence.increment())
 
         # node is alive
         self._on_node_alive(current_node)
