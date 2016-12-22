@@ -56,6 +56,7 @@ if hasattr(errno, "WSAECONNRESET"):
 HEADER_LENGTH = 9  # 4 for length, 1 for flags, 4 crc
 HEADER_FORMAT = '!IBl'
 
+
 class MessageError(Exception):
     pass
 
@@ -311,7 +312,7 @@ class TCPClient(object):
         return self._stream.write(MessageEncoder.encode(message))
 
     def close(self):
-        if self._stream is not None and not self._stream._closed:
+        if self._stream is not None:
             self._stream.close()
 
 
@@ -394,10 +395,12 @@ class TCPListener(tcpserver.TCPServer):
 
         LOG.debug("Finished handling TCP connection from: %s", addr)
 
+
 class UDPConnection(object):
     """
     The UDPConnection class is low-level interface for sending and receiving data asynchronously via UDP.
     """
+
     def __init__(self):
         self._socket = self._create_socket()
         self._state = None
@@ -560,6 +563,7 @@ class UDPClient(object):
     """
     The UDPClient sends messages via UDP
     """
+
     def __init__(self):
         self._connection = UDPConnection()
 
@@ -609,6 +613,7 @@ class UDPListener(object):
     """
     The UDPListener listens for messages via UDP
     """
+
     def __init__(self):
         self._connection = UDPConnection()
         self._ioloop = ioloop.IOLoop.current()
