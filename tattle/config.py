@@ -1,41 +1,43 @@
 import socket
 
 
-def get_default_node_name():
+def _default_node_name():
     return socket.gethostname()
 
 
 class Configuration(object):
-    node_name = None
-    node_address = None
-    node_port = None
-    bind_address = None
-    bind_port = None
-    api_address = None
-    api_port = None
-    probe_interval = None
-    probe_timeout = None
-    gossip_interval = None
-    gossip_nodes = None
-    sync_interval = None
-
     def __init__(self):
-        if self.node_name is None:
-            self.node_name = get_default_node_name()
+        self.node_name = None
+        self.node_address = None
+        self.node_port = None
+        self.bind_address = None
+        self.bind_port = None
+        self.api_address = None
+        self.api_port = None
+        self.probe_interval = None
+        self.probe_timeout = None
+        self.gossip_interval = None
+        self.gossip_nodes = None
+        self.sync_interval = None
 
 
 class DefaultConfiguration(Configuration):
-    bind_address = '127.0.0.1'
-    bind_port = 7878
-    api_address = '127.0.0.1'
-    api_port = 7800
-    probe_interval = 1000
-    probe_timeout = 200
-    gossip_interval = 100
-    gossip_nodes = 3
-    sync_interval = 15000
+    def __init__(self):
+        super(DefaultConfiguration, self).__init__()
+
+        self.bind_address = '127.0.0.1'
+        self.bind_port = 7900
+        self.api_address = '127.0.0.1'
+        self.api_port = 7800
+        self.probe_interval = 1000
+        self.probe_timeout = 200
+        self.gossip_interval = 100
+        self.gossip_nodes = 3
+        self.sync_interval = 15000
+
+        if self.node_name is None:
+            self.node_name = _default_node_name()
 
 
 def init_config():
     return DefaultConfiguration()
-

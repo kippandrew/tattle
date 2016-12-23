@@ -15,14 +15,14 @@ def get_logger(name, level=None, context=None):
     return logger
 
 
-def init_logger():
+def init_logger(level=logging.DEBUG):
     # clear existing handlers
     logging._handlers = []
     logger = get_logger(None)
     format = ConsoleFormatter(fmt='[$COLOR%(levelname)s$RESET] [%(asctime)s] [$COLOR%(name)s$RESET] %(message)s')
     handler = logging.StreamHandler(stream=sys.stdout)
     handler.setFormatter(format)
-    handler.setLevel(logging.DEBUG)
+    handler.setLevel(level)
     logger.setLevel(logging.NOTSET)
     logger.addHandler(handler)
     return logger

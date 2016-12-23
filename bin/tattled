@@ -13,17 +13,49 @@ import tattle.api
 LOG = tattle.logging.get_logger('tattled')
 
 
-def parse_arguments():
+def _parse_address(address):
+    if ':' in address:
+        host, _, port = address.split(':')
+        return host, port
+    return address, None
+
+
+def _parse_arguments():
     parser = argparse.ArgumentParser()
+    parser.add_argument("-n", "--name", type=str,
+                        help="node name")
+    parser.add_argument("-a", "--address", type=str,
+                        help="node address")
+    parser.add_argument("-b", "--bind", type=str,
+                        help="bind address")
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="verbose output")
     return parser.parse_args()
 
 
 if __name__ == '__main__':
     # parse arguments
-    args = parse_arguments()
+    args = _parse_arguments()
 
     # init config
     config = tattle.config.init_config()
+
+    if args.name is not None:
+        config.node_name = args.name
+
+    if args.address is not None:
+        node_address, node_port = _parse_address(args.address)
+        if node_address is not None:
+            config.node_address = node_address
+        if node_port is not None:
+            config.node_port = node_port
+
+    if args.bind is not None:
+        bind_address, bind_port = _parse_address(args.bind)
+        if bind_address is not None:
+            config.bind_address = bind_address
+        if bind_port is not None:
+            config.bind_port = bind_port
 
     # init logging
     logger = tattle.logging.init_logger()

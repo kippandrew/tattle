@@ -1,3 +1,4 @@
+import collections
 import traceback
 
 from tornado import web
@@ -131,7 +132,10 @@ class DefaultAPIHandler(APIRequestHandler):
 # noinspection PyAbstractClass
 class JoinAPIHandler(APIRequestHandler):
     def post(self):
-        pass
+
+        nodes = self.get_json('nodes', None)
+        if nodes is None or not isinstance(nodes, collections.Sequence):
+            raise APIError(400, error="A list of nodes to join must be specified.")
 
 
 # noinspection PyAbstractClass

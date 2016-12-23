@@ -1,5 +1,4 @@
 import socket
-import unittest
 
 from tornado import gen
 from tornado import testing
@@ -9,39 +8,8 @@ from tattle import network
 from tests import fixture
 
 
-class MessageEqualityTestCase(unittest.TestCase):
-    def test_message_equals(self):
-        msg1 = network.PingMessage(1, 'test')
-        msg2 = network.PingMessage(1, 'test')
-
-        self.assertEqual(msg1, msg2)
-
-    def test_message_not_equals(self):
-        msg1 = network.PingMessage(1, 'test')
-        msg2 = network.PingMessage(2, 'test')
-
-        self.assertNotEqual(msg1, msg2)
-
-    def test_message_hash(self):
-        msg1 = network.PingMessage(1, 'test')
-        msg2 = network.PingMessage(2, 'test')
-        msg3 = network.PingMessage(2, 'test')
-
-        self.assertEqual(len({msg1, msg2, msg3}), 2)
-
-
-class MessageEncoderTestCase(unittest.TestCase):
-    pass
-
-
-class MessageDecoderTestCase(unittest.TestCase):
-    def test_encode(self):
-        orig = network.PingMessage(seq=1, node="test")
-        buf = network.MessageEncoder.encode(orig)
-        self.assertEqual(orig, network.MessageDecoder.decode(buf))
-
-
 class AbstractNetworkTestCase(fixture.AbstractTestCase):
+    # noinspection PyAttributeOutsideInit
     def setUp(self):
         # setup super class
         super(AbstractNetworkTestCase, self).setUp()
@@ -58,21 +26,11 @@ class AbstractNetworkTestCase(fixture.AbstractTestCase):
         self.addCleanup(lambda: peer.close())  # automatically close the socket after tests run
         return peer
 
-    def _create_udp_client(self):
-        client = network.UDPClient()
-        self.addCleanup(lambda: client.close())  # automatically close the client after tests run
-        return client
-
     def _create_udp_listener(self, listen_address, listen_port):
         listener = network.UDPListener()
         listener.listen(listen_port, listen_address)
         self.addCleanup(lambda: listener.stop())  # automatically close the socket after tests run
         return listener
-
-    def _create_tcp_client(self):
-        client = network.TCPClient()
-        # self.addCleanup(lambda: client.close())  # automatically close the client after tests run
-        return client
 
     def _create_tcp_listener(self, listen_address, listen_port):
         listener = network.TCPListener()
@@ -108,13 +66,12 @@ class UDPConnectionTestCase(AbstractNetworkTestCase):
 
 
 class AbstractListenerTestCase(AbstractNetworkTestCase):
+    # noinspection PyAttributeOutsideInit
     def setUp(self):
         super(AbstractListenerTestCase, self).setUp()
         self.received = list()
 
-    def _handle_message(self, data, addr):
-        self.received.append((data, addr))
-
+    # noinspection PyPep8Naming
     def assertMessageReceived(self, msg, addr=None):
         for m, a in self.received:
             if m == msg:
@@ -122,8 +79,9 @@ class AbstractListenerTestCase(AbstractNetworkTestCase):
                     return
                 else:
                     return
-        self.fail("Message not received: %s from %s" % (msg, addr))
+        self.fail("Message not received: %s from %s %s" % (msg, addr, self.received))
 
+    # noinspection PyPep8Naming
     def assertMessageNotReceived(self, msg, addr=None):
         found = False
         for m, a in self.received:
@@ -140,64 +98,63 @@ class AbstractListenerTestCase(AbstractNetworkTestCase):
 
 class UDPClientTestCase(AbstractNetworkTestCase):
     @testing.gen_test
-    def test_send_udp_message(self):
-        test_message = network.PingMessage()
-
+    def test_send_udp(self):
+        # create UDPConnection
         peer1_addr = self._get_available_local_address()
         peer1 = self._create_udp_connection()
         peer1.bind(*peer1_addr)
 
-        client = self._create_udp_client()
-        client.sendto(test_message, *peer1_addr)
-        buf, addr = yield peer1.recvfrom()
+        # create UDPClient
+        conn = yield network.UDPClient().connect(*peer1_addr)
+        conn.send('foo bar')
+        received_data, addr = yield peer1.recvfrom()
 
-        received_message = network.MessageDecoder.decode(buf)
-        self.assertEqual(test_message, received_message)
+        self.assertEqual('foo bar', received_data)
 
 
 class UDPListenerTestCase(AbstractListenerTestCase):
+    def _handle_udp_data(self, data, addr):
+        self.received.append((data, addr))
+
     @testing.gen_test
     def test_receive_udp_message(self):
-        test_message = network.PingMessage()
-
         # configure a UDPListener
         listener_addr = self._get_available_local_address()
         listener = self._create_udp_listener(*listener_addr)
-        listener.start(self._handle_message)
+        listener.start(self._handle_udp_data)
 
-        # create a UDPConnection
+        # create a UDP connection
         peer1 = self._create_udp_connection()
         peer1_addr = ('localhost', 12345)
         peer1.bind(*peer1_addr)
 
         # send message to listener
-        peer1.sendto(network.MessageEncoder.encode(test_message), *listener_addr)
+        peer1.sendto('ding dong', *listener_addr)
 
         yield gen.sleep(0.1)
 
-        self.assertMessageReceived(test_message, peer1_addr)
+        self.assertMessageReceived('ding dong', peer1_addr)
 
 
 class TCPListenerTestCase(AbstractListenerTestCase):
+    @gen.coroutine
+    def _handle_tcp_stream(self, stream, addr):
+        data = yield stream.read_bytes(11)
+        self.received.append((data, addr))
 
     @testing.gen_test
     def test_receive_tcp_message(self):
-
-        test_message = network.PingMessage()
-
         # configure a TCPListener
         listener_addr = self._get_available_local_address()
         listener = self._create_tcp_listener(*listener_addr)
-        listener.start(self._handle_message)
+        listener.start(self._handle_tcp_stream)
 
-        # create a TCPClient
-        client1 = self._create_tcp_client()
-        client1_addr = (client1.local_address, client1.local_port)
-        yield client1.connect(*listener_addr)
+        # create a TCP connection
+        stream = yield network.TCPClient().connect(*listener_addr)
 
         # send message to listener
-        yield client1.send(test_message)
+        yield stream.write('hello world')
 
         yield gen.sleep(0.1)
 
-        self.assertMessageReceived(test_message, client1_addr)
+        self.assertMessageReceived('hello world')

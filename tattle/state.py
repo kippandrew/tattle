@@ -1,3 +1,5 @@
+import time
+
 from tattle import logging
 
 __all__ = [
@@ -15,13 +17,21 @@ LOG = logging.get_logger(__name__)
 
 
 class NodeState(object):
-    def __init__(self, name, address, port, protocol=None, protocol_min=None, protocol_max=None, incarnation=None):
+    def __init__(self, name, address, port, protocol=None, sequence=None, status=NODE_STATUS_DEAD):
         self.name = name
         self.address = address
         self.port = port
-        self.protocol_version = protocol
-        self.protocol_version_min = protocol_min
-        self.protocol_version_max = protocol_max
-        self.incarnation = incarnation
-        self.status = NODE_STATUS_DEAD
-        self.status_change_timestamp = None
+        self.sequence = sequence
+        self.protocol = protocol
+        self._status = status
+        self._status_change_timestamp = None
+
+    def _get_status(self):
+        return self._status
+
+    def _set_status(self, value):
+        if value != self._status:
+            self._status = value
+            self._status_change_timestamp = time.time()
+
+    status = property(_get_status, _set_status)
