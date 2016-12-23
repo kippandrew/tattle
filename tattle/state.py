@@ -1,10 +1,12 @@
 import collections
 import time
+import random
 
 from tornado import gen
 from tornado import locks
 
 from tattle import logging
+from tattle import messages
 
 __all__ = [
     'NodeState',
@@ -21,13 +23,13 @@ LOG = logging.get_logger(__name__)
 
 
 class NodeState(object):
-    def __init__(self, name, address, port, protocol=None, sequence=None, status=NODE_STATUS_DEAD):
+    def __init__(self, name, address, port, protocol=None, incarnation=None):
         self.name = name
         self.address = address
         self.port = port
-        self.sequence = sequence
+        self.incarnation = incarnation
         self.protocol = protocol
-        self._status = status
+        self._status = None
         self._status_change_timestamp = None
 
     def _get_status(self):
@@ -41,32 +43,34 @@ class NodeState(object):
     status = property(_get_status, _set_status)
 
 
+#
+# class Node(NodeState):
+#     pass
+
+
 class NodeManager(collections.Sequence):
     def __init__(self, queue):
-        self._nodes = collections.OrderedDict()
+        self._nodes = list()
+        self._nodes_map = dict()
         self._nodes_lock = locks.Lock()
         self._local_node_name = None
         self._queue = queue
 
-    def __getitem__(self, name):
-        return self._nodes.__getitem__(name)
+    def __getitem__(self, index):
+        return self._nodes[index]
 
     def __iter__(self):
-        return self._nodes.itervalues()
+        return self._nodes.__iter__()
 
     def __len__(self):
         return len(self._nodes)
 
     @property
-    def lock(self):
-        return self._nodes_lock
-
-    @property
     def local_node(self):
-        return self._nodes[self._local_node_name]
+        return self._nodes_map[self._local_node_name]
 
     @gen.coroutine
-    def set_local_node(self, local_node_name, local_node_address, local_node_port, local_node_sequence):
+    def set_local_node(self, local_node_name, local_node_address, local_node_port, local_node_incarnation):
         """
         Set local node as alive
         """
@@ -76,23 +80,23 @@ class NodeManager(collections.Sequence):
         new_state = NodeState(local_node_name,
                               local_node_address,
                               local_node_port,
-                              sequence=local_node_sequence)
+                              incarnation=local_node_incarnation)
 
         # signal node is alive
-        yield self._on_node_alive(new_state)
+        yield self.on_node_alive(new_state, bootstrap=True)
 
     @gen.coroutine
     def merge(self, new_state):
         if new_state.status == NODE_STATUS_ALIVE:
-            yield self._on_node_alive(new_state)
+            yield self.on_node_alive(new_state)
         elif new_state.status == NODE_STATUS_DEAD:
             # rather then declaring a node a dead immediately, mark it as suspect
-            yield self._on_node_suspect(new_state)
+            yield self.on_node_suspect(new_state)
         elif new_state.status == NODE_STATUS_SUSPECT:
-            yield self._on_node_suspect(new_state)
+            yield self.on_node_suspect(new_state)
 
     @gen.coroutine
-    def _on_node_alive(self, new_state, bootstrap=True):
+    def on_node_alive(self, new_state, bootstrap=True):
 
         # acquire node lock
         with (yield self._nodes_lock.acquire()):
@@ -105,15 +109,22 @@ class NodeManager(collections.Sequence):
             #     return
 
             # check if this is a new node
-            current_state = self._nodes.get(new_state.name)
+            current_state = self._nodes_map.get(new_state.name)
             if current_state is None:
                 LOG.info("Node discovered: %s", new_state.name)
 
                 # add node to the node map also
-                self._nodes[new_state.name] = new_state
+                self._nodes_map[new_state.name] = new_state
+                self._nodes.append(new_state)
 
                 # set current state
                 current_state = new_state
+
+            else:
+                LOG.debug("Node exists: %s (current incarnation: %d, new incarnation: %d)",
+                          current_state.name,
+                          current_state.incarnation,
+                          new_state.incarnation)
 
             # check node address
             if current_state.address != new_state.address or current_state.port != new_state.port:
@@ -123,16 +134,12 @@ class NodeManager(collections.Sequence):
 
             is_local_node = new_state.name == self._local_node_name
 
-            # bail if the sequence number is older, and this is not about us
-            if not is_local_node and new_state.sequence <= current_state.sequence:
-                LOG.debug("Old sequence for node %s (current=%d new=%d)",
-                          new_state.name, current_state.sequence, new_state.sequence)
+            # bail if the incarnation number is older or the same at the current state, and this is not about us
+            if not is_local_node and new_state.incarnation <= current_state.incarnation:
                 return
 
-            # bail if the sequence number is strictly less and this is about us
-            if is_local_node and new_state.sequence < current_state.sequence:
-                LOG.warn("Old sequence for current node %s (current=%d new=%d)",
-                         new_state.name, current_state.sequence, new_state.sequence)
+            # bail if the incarnation number is older then the current state, and this is about us
+            if is_local_node and new_state.incarnation < current_state.incarnation:
                 return
 
             # TODO: clear suspicion timer that may be in effect
@@ -144,25 +151,47 @@ class NodeManager(collections.Sequence):
 
             else:
                 # TODO: queue broadcast message for gossip
+                self._queue.push(messages.AliveMessage(new_state.name,
+                                                       new_state.address,
+                                                       new_state.port,
+                                                       new_state.incarnation))
 
                 # Update the state and incarnation number
-                current_state.sequence = new_state.sequence
+                current_state.incarnation = new_state.incarnation
                 current_state.status = NODE_STATUS_ALIVE
 
-            LOG.info("Node alive: %s", new_state.name)
+            LOG.info("Node alive: %s (incarnation %d)", new_state.name, new_state.incarnation)
 
     @gen.coroutine
-    def _on_node_dead(self, node):
+    def on_node_dead(self, node):
 
         with (yield self._nodes_lock.acquire()):
             pass
 
     @gen.coroutine
-    def _on_node_suspect(self, node):
+    def on_node_suspect(self, node):
 
         with (yield self._nodes_lock.acquire()):
             pass
 
 
-def kRandomNodes():
-    pass
+def select_random_nodes(k, nodes, filter_func=None):
+    selected = []
+
+    n = len(nodes)
+    k = min(k, len(nodes))
+    j = 0
+
+    while len(selected) < k and j <= (3 * n):
+        j += 1
+        node = random.choice(nodes)
+        if node in selected:
+            continue
+
+        if filter_func is not None:
+            if filter_func(node):
+                continue
+
+        selected.append(node)
+
+    return selected

@@ -5,6 +5,7 @@ from tornado import iostream
 from tornado import netutil
 
 from tattle import broadcast
+from tattle import gossip
 from tattle import logging
 from tattle import messages
 from tattle import network
@@ -37,15 +38,21 @@ class Cluster(object):
         self._udp_listener = self._init_listener_udp()
         self._tcp_listener = self._init_listener_tcp()
 
-        # init clients
-        self._udp_client = self._init_client_udp()
-        self._tcp_client = self._init_client_tcp()
+        # # init clients
+        # self._udp_client = self._init_client_udp()
+        # self._tcp_client = self._init_client_tcp()
 
-        # init broadcast queue
-        self._broadcast_queue = self._init_broadcast_queue()
+        # init queue
+        self._queue = self._init_broadcast_queue()
 
         # initialize node manager
-        self.nodes = state.NodeManager(self._broadcast_queue)
+        self._nodes = state.NodeManager(self._queue)
+
+        # init gossip
+        self._gossip = self._init_gossip()
+
+        # init probe
+        self._probe = self._init_probe()
 
     def _init_listener_udp(self):
         udp_listener = network.UDPListener()
@@ -70,24 +77,18 @@ class Cluster(object):
         return tcp_client
 
     def _init_broadcast_queue(self):
-        broadcast_queue = broadcast.BroadcastQueue()
-        return broadcast_queue
+        queue = broadcast.BroadcastQueue()
+        return queue
 
-    # @gen.coroutine
-    # def _start_schedulers(self):
-    #     self._probe_scheduler.start()
-    #     LOG.debug("Started probe scheduler (interval=%dms)", self.config.probe_interval)
-    #
-    #     self._gossip_scheduler.start()
-    #     LOG.debug("Started gossip scheduler (interval=%dms)", self.config.gossip_interval)
-    #
-    # @gen.coroutine
-    # def _stop_schedulers(self):
-    #     LOG.debug("Stopped probe scheduler")
-    #     self._probe_scheduler.stop()
-    #
-    #     LOG.debug("Stopped gossip scheduler")
-    #     self._gossip_scheduler.stop()
+    def _init_gossip(self):
+        broadcaster = gossip.Gossip(self._queue,
+                                    self._nodes,
+                                    self.config.gossip_interval,
+                                    self.config.gossip_nodes)
+        return broadcaster
+
+    def _init_probe(self):
+        pass
 
     @property
     def local_node_address(self):
@@ -125,11 +126,13 @@ class Cluster(object):
         """
 
         local_node_name = self._get_local_node_name
-        yield self.nodes.set_local_node(local_node_name,
-                                        self.local_node_address,
-                                        self.local_node_port,
-                                        self._node_seq.increment())
+        yield self._nodes.set_local_node(local_node_name,
+                                         self.local_node_address,
+                                         self.local_node_port,
+                                         self._node_seq.increment())
 
+        self._gossip.start()
+        # self._probe.start()
         # yield self._start_schedulers()
 
     @gen.coroutine
@@ -177,38 +180,34 @@ class Cluster(object):
         Shutdown this node. This will cause this node to appear dead to other nodes.
         :return: None
         """
-        # self._stop_schedulers()
-
+        self._gossip.stop()
         LOG.info("Shut down")
 
     @property
     def members(self):
-        return self.nodes
+        return self._nodes
 
     @gen.coroutine
     def _merge_remote_state(self, remote_state):
         LOG.debug("Merging remote state: %s", remote_state)
 
-        new_state = state.NodeState(remote_state.name,
-                                    remote_state.addr,
+        new_state = state.NodeState(remote_state.node,
+                                    remote_state.address,
                                     remote_state.port,
-                                    protocol=remote_state.protocol,
-                                    sequence=remote_state.sequence,
-                                    status=remote_state.status)
-
-        yield self.nodes.merge(new_state)
+                                    incarnation=remote_state.incarnation)
+        new_state.status = remote_state.status
+        yield self._nodes.merge(new_state)
 
     @gen.coroutine
     def _send_local_state(self, stream):
-        local_state = []
 
-        # copy local state
-        for node in self.nodes:
+        # get local state
+        local_state = []
+        for node in self._nodes:
             local_state.append(messages.RemoteNodeState(node.name,
                                                         node.address,
                                                         node.port,
-                                                        node.protocol,
-                                                        node.sequence,
+                                                        node.incarnation,
                                                         node.status))
 
         LOG.debug("Sending local state %s", local_state)
@@ -254,15 +253,6 @@ class Cluster(object):
             stream.close()
 
         raise gen.Return(node_addr)
-
-    def _do_probe(self):
-        pass
-
-    def _probe_node(self, node_addr):
-        pass
-
-    def _do_gossip(self):
-        pass
 
     @gen.coroutine
     def _resolve_node_address(self, node_addr):
@@ -403,6 +393,11 @@ class Cluster(object):
     @gen.coroutine
     def _handle_alive_message(self, message, addr):
         LOG.debug("Handling ALIVE message: node=%s", message.node)
+
+        yield self._nodes.on_node_alive(state.NodeState(message.node,
+                                                        message.address,
+                                                        message.port,
+                                                        incarnation=message.incarnation))
 
     @gen.coroutine
     def _handle_suspect_message(self, message, addr):

@@ -140,6 +140,7 @@ class UDPConnection(object):
         self._socket.close()
         self._socket = None
 
+    @gen.coroutine
     def send(self, data):
         """
         Send data

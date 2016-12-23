@@ -1,22 +1,23 @@
 from __future__ import absolute_import
 
+import contextlib
 import logging
 import logging.config
 
 import sys
 
 
-def get_logger(name, level=None):
+def get_logger(name=None, level=None):
     logger = logging.getLogger(name)
     if level is not None:
         logger.setLevel(level)
-    return logger
+    return LogPrefixAdapter(logger)
 
 
 def init_logger(level=logging.DEBUG):
     # clear existing handlers
     logging._handlers = []
-    logger = get_logger(None)
+    logger = logging.getLogger()
     formatter = ConsoleLogFormatter(fmt='[$COLOR%(levelname)s$RESET] [%(asctime)s] [$COLOR%(name)s$RESET] %(message)s')
     handler = logging.StreamHandler(stream=sys.stdout)
     handler.setFormatter(formatter)
@@ -24,6 +25,32 @@ def init_logger(level=logging.DEBUG):
     logger.setLevel(logging.NOTSET)
     logger.addHandler(handler)
     return logger
+
+
+def LogPrefixContext(prefix):
+    @contextlib.contextmanager
+    def _context_manager():
+        LogPrefixAdapter.prefix = prefix
+        yield
+        LogPrefixAdapter.prefix = None
+
+    return _context_manager
+
+
+class LogPrefixAdapter(logging.LoggerAdapter):
+    prefix = None
+
+    def __init__(self, logger, extra=None):
+        super(LogPrefixAdapter, self).__init__(logger, extra)
+
+    def warn(self, msg, *args, **kwargs):
+        self.warning(msg, *args, **kwargs)
+
+    def process(self, msg, kwargs):
+        if self.prefix is None:
+            return msg, kwargs
+        else:
+            return '[%s] %s' % (self.prefix, msg), kwargs
 
 
 class ConsoleLogFormatter(logging.Formatter):

@@ -208,7 +208,7 @@ class NackMessage(Message):
 class SuspectMessage(Message):
     _fields_ = [
         "node",  # node name
-        "sequence",
+        "incarnation",
         "from"
     ]
 
@@ -216,7 +216,7 @@ class SuspectMessage(Message):
 class DeadMessage(Message):
     _fields_ = [
         "node",  # node name
-        "sequence",
+        "incarnation",
         "from"
     ]
 
@@ -224,9 +224,9 @@ class DeadMessage(Message):
 class AliveMessage(Message):
     _fields_ = [
         "node",  # node name
-        "sequence",
-        "addr",
-        "port"
+        "address",
+        "port",
+        "incarnation"
     ]
 
 
@@ -236,11 +236,10 @@ class RefuteMessage(Message):
 
 class RemoteNodeState(BaseMessage):
     _fields_ = [
-        "name",
-        "addr",
+        "node",
+        "address",
         "port",
-        "protocol",
-        "sequence",
+        "incarnation",
         "status"
     ]
 
