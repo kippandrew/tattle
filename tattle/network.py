@@ -6,6 +6,7 @@ import time
 from tornado import concurrent
 from tornado import gen
 from tornado import ioloop
+from tornado import stack_context
 from tornado import tcpclient
 from tornado import tcpserver
 
@@ -34,40 +35,11 @@ if hasattr(errno, "WSAECONNRESET"):
     _ERRNO_CONNRESET += (errno.WSAECONNRESET, errno.WSAECONNABORTED, errno.WSAETIMEDOUT)
 
 
-# @gen.coroutine
-# def _read_message(stream):
-#     buf = bytes()
-#     length, buf = yield _read_message_header(stream, buf)
-#     message = yield _read_message_body(stream, length, buf)
-#     raise gen.Return(message)
-#
-#
-# @gen.coroutine
-# def _read_message_header(stream, buf):
-#     buf += yield stream.read_bytes(HEADER_LENGTH)
-#     length, flags, crc = struct.unpack(HEADER_FORMAT, buf[0:HEADER_LENGTH])  # unpack header in network B/O
-#     raise gen.Return((length - HEADER_LENGTH, buf))
-#
-#
-# @gen.coroutine
-# def _read_message_body(stream, length, buf):
-#     # read message
-#     buf += yield stream.read_bytes(length)
-#
-#     # decode message
-#     try:
-#         message = MessageDecoder.decode(buf)
-#         LOG.debug("Decoded message: %s", message)
-#     except MessageDecodeError as e:
-#         LOG.error("Error decoding message: %s", e)
-#         return
-#     raise gen.Return(message)
-
-
 class TCPClient(tcpclient.TCPClient):
     """
     TCPClient is a factory for creating TCP connections (IOStream)
     """
+    pass
 
 
 class TCPListener(tcpserver.TCPServer):
@@ -94,7 +66,7 @@ class TCPListener(tcpserver.TCPServer):
     # noinspection PyMethodOverriding
     def start(self, message_callback):
         super(TCPListener, self).start()
-        self._stream_callback = message_callback
+        self._stream_callback = stack_context.wrap(message_callback)
 
     def stop(self):
         super(TCPListener, self).stop()
@@ -322,12 +294,12 @@ class UDPListener(object):
         """
         self._connection.bind(address, port)
 
-    def start(self, message_callback):
+    def start(self, data_callback):
         """
         Start the listener
         :return:
         """
-        self._data_callback = message_callback
+        self._data_callback = stack_context.wrap(data_callback)
 
         # wait for data
         self._ioloop.add_future(self._connection.recvfrom(timeout=0), self._handle_data)

@@ -1,10 +1,7 @@
-import collections
 import struct
 
-from tornado import ioloop
 from tornado import gen
 from tornado import iostream
-from tornado import locks
 from tornado import netutil
 
 from tattle import broadcast
@@ -28,8 +25,6 @@ class Cluster(object):
         :param config:
         :type config: tattle.config.Configuration
         """
-        self.nodes = collections.OrderedDict()
-        self._nodes_lock = locks.Lock()
         self.config = config
         self._ping_seq = utils.Sequence()
         self._node_seq = utils.Sequence()
@@ -46,14 +41,11 @@ class Cluster(object):
         self._udp_client = self._init_client_udp()
         self._tcp_client = self._init_client_tcp()
 
-        # setup scheduled callbacks
-        self._probe_scheduler = ioloop.PeriodicCallback(self._do_probe,
-                                                        self.config.probe_interval)
+        # init broadcast queue
+        self._broadcast_queue = self._init_broadcast_queue()
 
-        self._gossip_scheduler = ioloop.PeriodicCallback(self._do_gossip,
-                                                         self.config.gossip_interval)
-
-        LOG.debug("Initialized Cluster")
+        # initialize node manager
+        self.nodes = state.NodeManager(self._broadcast_queue)
 
     def _init_listener_udp(self):
         udp_listener = network.UDPListener()
@@ -77,22 +69,53 @@ class Cluster(object):
         tcp_client = network.TCPClient()
         return tcp_client
 
-    def _init_message_broadcaster(self):
-        self._broadcast = broadcast.MessageBroadcaster()
+    def _init_broadcast_queue(self):
+        broadcast_queue = broadcast.BroadcastQueue()
+        return broadcast_queue
 
-    def _start_schedulers(self):
-        self._probe_scheduler.start()
-        LOG.debug("Started probe scheduler (interval=%dms)", self.config.probe_interval)
+    # @gen.coroutine
+    # def _start_schedulers(self):
+    #     self._probe_scheduler.start()
+    #     LOG.debug("Started probe scheduler (interval=%dms)", self.config.probe_interval)
+    #
+    #     self._gossip_scheduler.start()
+    #     LOG.debug("Started gossip scheduler (interval=%dms)", self.config.gossip_interval)
+    #
+    # @gen.coroutine
+    # def _stop_schedulers(self):
+    #     LOG.debug("Stopped probe scheduler")
+    #     self._probe_scheduler.stop()
+    #
+    #     LOG.debug("Stopped gossip scheduler")
+    #     self._gossip_scheduler.stop()
 
-        self._gossip_scheduler.start()
-        LOG.debug("Started gossip scheduler (interval=%dms)", self.config.gossip_interval)
+    @property
+    def local_node_address(self):
+        if self.config.node_address is not None:
+            return self.config.node_address
+        else:
+            if self.config.bind_address is not None:
+                if self.config.bind_address == '0.0.0.0':
+                    # TODO: enumerate interfaces to get ip address
+                    raise NotImplementedError()
+                else:
+                    return self.config.bind_address
+            else:
+                return self._udp_listener.local_address
 
-    def _stop_schedulers(self):
-        LOG.debug("Stopped probe scheduler")
-        self._probe_scheduler.stop()
+    @property
+    def local_node_port(self):
+        if self.config.node_port is not None:
+            return self.config.node_port
+        else:
+            if self.config.bind_port is not None:
+                return self.config.bind_port
+            else:
+                return self._udp_listener.local_port
 
-        LOG.debug("Stopped gossip scheduler")
-        self._gossip_scheduler.stop()
+    @property
+    def _get_local_node_name(self):
+        return "{name}:{port}".format(name=self.config.node_name, port=self.local_node_port)
 
     @gen.coroutine
     def run(self):
@@ -101,9 +124,13 @@ class Cluster(object):
         :return:
         """
 
-        yield self._set_local_node_alive()
+        local_node_name = self._get_local_node_name
+        yield self.nodes.set_local_node(local_node_name,
+                                        self.local_node_address,
+                                        self.local_node_port,
+                                        self._node_seq.increment())
 
-        self._start_schedulers()
+        # yield self._start_schedulers()
 
     @gen.coroutine
     def join(self, nodes):
@@ -150,45 +177,13 @@ class Cluster(object):
         Shutdown this node. This will cause this node to appear dead to other nodes.
         :return: None
         """
-        self._stop_schedulers()
+        # self._stop_schedulers()
 
         LOG.info("Shut down")
 
     @property
     def members(self):
-        return self.nodes.viewvalues()
-
-    @property
-    def local_node_address(self):
-        if self.config.node_address is not None:
-            return self.config.node_address
-        else:
-            if self.config.bind_address is not None:
-                if self.config.bind_address == '0.0.0.0':
-                    # TODO: enumerate interfaces to get ip address
-                    raise NotImplementedError()
-                else:
-                    return self.config.bind_address
-            else:
-                return self._udp_listener.local_address
-
-    @property
-    def local_node_port(self):
-        if self.config.node_port is not None:
-            return self.config.node_port
-        else:
-            if self.config.bind_port is not None:
-                return self.config.bind_port
-            else:
-                return self._udp_listener.local_port
-
-    @property
-    def local_node_name(self):
-        return "{name}:{port}".format(name=self.config.node_name, port=self.local_node_port)
-
-    @property
-    def local_node(self):
-        return self.nodes[self.local_node_name]
+        return self.nodes
 
     @gen.coroutine
     def _merge_remote_state(self, remote_state):
@@ -201,22 +196,20 @@ class Cluster(object):
                                     sequence=remote_state.sequence,
                                     status=remote_state.status)
 
-        yield self._merge_node(new_state)
+        yield self.nodes.merge(new_state)
 
     @gen.coroutine
     def _send_local_state(self, stream):
         local_state = []
 
-        # FIXME: is lock necessary?
-        with (yield self._nodes_lock.acquire()):
-            # copy local state
-            for node in self.nodes.values():
-                local_state.append(messages.RemoteNodeState(node.name,
-                                                            node.address,
-                                                            node.port,
-                                                            node.protocol,
-                                                            node.sequence,
-                                                            node.status))
+        # copy local state
+        for node in self.nodes:
+            local_state.append(messages.RemoteNodeState(node.name,
+                                                        node.address,
+                                                        node.port,
+                                                        node.protocol,
+                                                        node.sequence,
+                                                        node.status))
 
         LOG.debug("Sending local state %s", local_state)
 
@@ -328,12 +321,10 @@ class Cluster(object):
     @gen.coroutine
     def _handle_tcp_stream(self, stream, addr):
         try:
-
             # read until closed
             while True:
 
                 try:
-                    # read a message
                     data = yield self._read_message(stream)
                 except iostream.StreamClosedError:
                     break
@@ -420,105 +411,3 @@ class Cluster(object):
     @gen.coroutine
     def _handle_dead_message(self, message, addr):
         LOG.debug("Handling DEAD message: node=%s", message.node)
-
-    @gen.coroutine
-    def _merge_node(self, new_state):
-        if new_state.status == state.NODE_STATUS_ALIVE:
-            yield self._on_node_alive(new_state)
-        elif new_state.status == state.NODE_STATUS_DEAD:
-            # rather then declaring a node a dead immediately, mark it as suspect
-            yield self._on_node_suspect(new_state)
-        elif new_state.status == state.NODE_STATUS_SUSPECT:
-            yield self._on_node_suspect(new_state)
-
-    @gen.coroutine
-    def _on_node_alive(self, new_state, bootstrap=True):
-
-        # acquire node lock
-        with (yield self._nodes_lock.acquire()):
-
-            # It is possible that during a leave(), there is already an aliveMsg
-            # in-queue to be processed but blocked by the locks above. If we let
-            # that aliveMsg process, it'll cause us to re-join the cluster. This
-            # ensures that we don't.
-            if self._leaving and new_state.name == self.local_node_name:
-                return
-
-            # check if this is a new node
-            current_state = self.nodes.get(new_state.name)
-            if current_state is None:
-                LOG.debug("New node discovered: %s", new_state.name)
-
-                # add node to the node map also
-                self.nodes[new_state.name] = new_state
-
-                # set current state
-                current_state = new_state
-
-            # check node address
-            if current_state.address != new_state.address or current_state.port != new_state.port:
-                LOG.warn("Conflicting node address for %s (current=%s:%d new=%s:%d)",
-                         new_state.name, current_state.address, current_state.port, new_state.address, new_state.port)
-                return
-
-            is_local_node = new_state.name == self.local_node_name
-
-            # bail if the sequence number is older, and this is not about us
-            if not is_local_node and new_state.sequence <= current_state.sequence:
-                LOG.debug("Old sequence for node %s (current=%d new=%d)",
-                         new_state.name, current_state.sequence, new_state.sequence)
-                return
-
-            # bail if the sequence number is strictly less and this is about us
-            if is_local_node and new_state.sequence < current_state.sequence:
-                LOG.warn("Old sequence for current node %s (current=%d new=%d)",
-                         new_state.name, current_state.sequence, new_state.sequence)
-                return
-
-            # TODO: clear out any suspicion timer that may be in effect.
-
-            # If this about us we need to refute, otherwise broadcast
-            if is_local_node and not bootstrap:
-                # TODO: refute
-                pass
-
-            else:
-                # # queue broadcast message
-                # self._broadcast_queue.push(message.AliveMessage.create(new_state.name,
-                #                                                        new_state.incarnation,
-                #                                                        new_state.address,
-                #                                                        new_state.port))
-
-                # Update the state and incarnation number
-                current_state.sequence = new_state.sequence
-                current_state.status = state.NODE_STATUS_ALIVE
-
-            # TODO: metrics
-            LOG.debug("Node is alive: %s", new_state.name)
-
-    @gen.coroutine
-    def _on_node_dead(self, node):
-
-        with (yield self._nodes_lock.acquire()):
-            pass
-
-    @gen.coroutine
-    def _on_node_suspect(self, node):
-
-        with (yield self._nodes_lock.acquire()):
-            pass
-
-    @gen.coroutine
-    def _set_local_node_alive(self):
-        """
-        Set this node as alive
-        """
-
-        # create NodeState for this node
-        new_state = state.NodeState(self.local_node_name,
-                                    self.local_node_address,
-                                    self.local_node_port,
-                                    sequence=self._node_seq.increment())
-
-        # node is alive
-        yield self._on_node_alive(new_state)

@@ -6,12 +6,10 @@ import logging.config
 import sys
 
 
-def get_logger(name, level=None, context=None):
+def get_logger(name, level=None):
     logger = logging.getLogger(name)
     if level is not None:
         logger.setLevel(level)
-    if context is not None:
-        return context(logger)
     return logger
 
 
@@ -19,15 +17,16 @@ def init_logger(level=logging.DEBUG):
     # clear existing handlers
     logging._handlers = []
     logger = get_logger(None)
-    format = ConsoleFormatter(fmt='[$COLOR%(levelname)s$RESET] [%(asctime)s] [$COLOR%(name)s$RESET] %(message)s')
+    formatter = ConsoleLogFormatter(fmt='[$COLOR%(levelname)s$RESET] [%(asctime)s] [$COLOR%(name)s$RESET] %(message)s')
     handler = logging.StreamHandler(stream=sys.stdout)
-    handler.setFormatter(format)
+    handler.setFormatter(formatter)
     handler.setLevel(level)
     logger.setLevel(logging.NOTSET)
     logger.addHandler(handler)
     return logger
 
-class ConsoleFormatter(logging.Formatter):
+
+class ConsoleLogFormatter(logging.Formatter):
     BLACK, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, WHITE = range(8)
 
     COLORS = {
@@ -49,8 +48,8 @@ class ConsoleFormatter(logging.Formatter):
     COLOR_SEQ = "\033[%dm"
     BOLD_SEQ = "\033[1m"
 
-    def __init__(self, *args, **kwargs):
-        logging.Formatter.__init__(self, *args, **kwargs)
+    def __init__(self, fmt):
+        logging.Formatter.__init__(self, fmt)
 
     def format(self, record):
         levelname = record.levelname
