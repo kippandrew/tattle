@@ -11,8 +11,9 @@ def get_logger(name, level=None, context=True):
     logger = logging.getLogger(name)
     if level is not None:
         logger.setLevel(level)
-    # wrap the logger if context is enabled
-    return LogPrefixAdapter(logger) if context else logger
+    if context:
+        logger.addFilter(LogContextFilter())
+    return logger
 
 
 def init_logger(level=logging.DEBUG):
@@ -21,7 +22,7 @@ def init_logger(level=logging.DEBUG):
 
     # configure root logger
     logger = logging.getLogger()
-    formatter = ConsoleLogFormatter(fmt='[$COLOR%(levelname)s$RESET] [%(asctime)s] [$COLOR%(name)s$RESET] %(message)s')
+    formatter = ConsoleLogFormatter('[%(context)s] [%(asctime)s] [$COLOR%(name)s$RESET] %(message)s')
     handler = logging.StreamHandler(stream=sys.stdout)
     handler.setFormatter(formatter)
     handler.setLevel(level)
@@ -30,32 +31,25 @@ def init_logger(level=logging.DEBUG):
     return logger
 
 
-def LogPrefixContext(prefix):
-    """Factory to create LogPrefix context managers"""
+# noinspection PyPep8Naming
+def LogContext(name):
+    """Factory to create LogContext context managers"""
 
     @contextlib.contextmanager
     def _context_manager():
-        LogPrefixAdapter.prefix = prefix
+        LogContextFilter.context = name
         yield
-        LogPrefixAdapter.prefix = None
+        LogContextFilter.context = None
 
     return _context_manager
 
 
-class LogPrefixAdapter(logging.LoggerAdapter):
-    prefix = None
+class LogContextFilter(logging.Filter):
+    context = None
 
-    def __init__(self, logger, extra=None):
-        super(LogPrefixAdapter, self).__init__(logger, extra)
-
-    def warn(self, msg, *args, **kwargs):
-        self.warning(msg, *args, **kwargs)
-
-    def process(self, msg, kwargs):
-        if self.prefix is None:
-            return msg, kwargs
-        else:
-            return '[%s] %s' % (self.prefix, msg), kwargs
+    def filter(self, record):
+        record.context = self.context
+        return True
 
 
 class ConsoleLogFormatter(logging.Formatter):
