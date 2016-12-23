@@ -53,15 +53,15 @@ class UDPConnectionTestCase(AbstractNetworkTestCase):
         peer2.bind(*peer2_addr)
 
         # send message from peer1 to peer2
-        peer1.sendto('Foo Bar', *peer2_addr)
+        peer1.sendto(b'Foo Bar', *peer2_addr)
         data, addr = yield peer2.recvfrom()
-        self.assertEqual(data, 'Foo Bar')
+        self.assertEqual(data, b'Foo Bar')
         self.assertEqual(addr, peer1_addr)
 
         # send message from peer2 to peer1
-        peer2.sendto('Ding Dong', *peer1_addr)
+        peer2.sendto(b'Ding Dong', *peer1_addr)
         data, addr = yield peer1.recvfrom()
-        self.assertEqual(data, 'Ding Dong')
+        self.assertEqual(data, b'Ding Dong')
         self.assertEqual(addr, peer2_addr)
 
 
@@ -106,10 +106,10 @@ class UDPClientTestCase(AbstractNetworkTestCase):
 
         # create UDPClient
         conn = yield network.UDPClient().connect(*peer1_addr)
-        conn.send('foo bar')
+        conn.send(b'foo bar')
         received_data, addr = yield peer1.recvfrom()
 
-        self.assertEqual('foo bar', received_data)
+        self.assertEqual(b'foo bar', received_data)
 
 
 class UDPListenerTestCase(AbstractListenerTestCase):
@@ -125,15 +125,15 @@ class UDPListenerTestCase(AbstractListenerTestCase):
 
         # create a UDP connection
         peer1 = self._create_udp_connection()
-        peer1_addr = ('localhost', 12345)
+        peer1_addr = (b'localhost', 12345)
         peer1.bind(*peer1_addr)
 
         # send message to listener
-        peer1.sendto('ding dong', *listener_addr)
+        peer1.sendto(b'ding dong', *listener_addr)
 
         yield gen.sleep(0.1)
 
-        self.assertMessageReceived('ding dong', peer1_addr)
+        self.assertMessageReceived(b'ding dong', peer1_addr)
 
 
 class TCPListenerTestCase(AbstractListenerTestCase):
@@ -153,8 +153,8 @@ class TCPListenerTestCase(AbstractListenerTestCase):
         stream = yield network.TCPClient().connect(*listener_addr)
 
         # send message to listener
-        yield stream.write('hello world')
+        yield stream.write(b'hello world')
 
         yield gen.sleep(0.1)
 
-        self.assertMessageReceived('hello world')
+        self.assertMessageReceived(b'hello world')

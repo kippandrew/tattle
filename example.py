@@ -13,7 +13,7 @@ contexts = dict()
 
 
 def create_node_context(node_name):
-    ctx = stack_context.StackContext(tattle.logging.LogPrefixContext(node_name))
+    ctx = stack_context.StackContext(tattle.logging.LogContext(node_name))
     contexts[node_name] = ctx
     return ctx
 
@@ -60,8 +60,34 @@ def run():
     node1 = yield run_node()
     node2 = yield run_node()
     node3 = yield run_node()
+    node4 = yield run_node()
+    node5 = yield run_node()
 
-    run_with_node_context(node1, join_node, node1, [node2, node3])
+    run_with_node_context(node1, join_node, node1, [node2])
+    run_with_node_context(node1, join_node, node1, [node3])
+
+    yield gen.sleep(1)
+
+    print(node1.config.node_name, list(node1.members))
+    print(node2.config.node_name, list(node2.members))
+    print(node3.config.node_name, list(node3.members))
+
+    run_with_node_context(node4, join_node, node4, [node1])
+    yield gen.sleep(1)
+
+    print(node1.config.node_name, list(node1.members))
+    print(node2.config.node_name, list(node2.members))
+    print(node3.config.node_name, list(node3.members))
+    print(node4.config.node_name, list(node4.members))
+
+    run_with_node_context(node5, join_node, node5, [node4])
+    yield gen.sleep(1)
+
+    print(node1.config.node_name, list(node1.members))
+    print(node2.config.node_name, list(node2.members))
+    print(node3.config.node_name, list(node3.members))
+    print(node4.config.node_name, list(node4.members))
+    print(node5.config.node_name, list(node5.members))
 
 
 # init logging

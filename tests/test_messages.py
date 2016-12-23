@@ -31,7 +31,7 @@ class MessageEncoderTestCase(unittest.TestCase):
 
 class MessageDecoderTestCase(unittest.TestCase):
     def test_encode(self):
-        orig = messages.PingMessage(seq=1, node="test")
+        orig = messages.PingMessage(1, "test")
         buf = messages.MessageEncoder.encode(orig)
         self.assertEqual(orig, messages.MessageDecoder.decode(buf))
 

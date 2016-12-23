@@ -5,10 +5,10 @@ import struct
 import sys
 
 import msgpack
+import six
 
 HEADER_LENGTH = 9  # 4 for length, 1 for flags, 4 crc
-HEADER_FORMAT = '!IBl'
-
+HEADER_FORMAT = '!IBL'
 
 class MessageError(Exception):
     pass
@@ -118,10 +118,12 @@ class MessageDecoder(object):
         args = []
         for _ in range(len(fields)):
             attr = data.pop(0)
-            if isinstance(attr, collections.Sequence) and not isinstance(attr, (str, unicode)):
+            if isinstance(attr, six.string_types) or isinstance(attr, six.binary_type):
+                args.append(attr)
+            elif isinstance(attr, collections.Sequence):
                 args.insert(0, [cls._deserialize_internal(i) for i in attr])
             elif isinstance(attr, collections.Mapping):
-                args.insert(0, {k: cls._deserialize_internal(v) for k, v in attr.iteritems()})
+                args.insert(0, {k: cls._deserialize_internal(v) for k, v in six.iteritems(attr)})
             else:
                 args.append(attr)
 
@@ -132,7 +134,7 @@ class MessageDecoder(object):
 
     @classmethod
     def _deserialize(cls, raw):
-        message = cls._deserialize_internal(msgpack.unpackb(raw, use_list=True))
+        message = cls._deserialize_internal(msgpack.unpackb(raw, encoding='utf-8', use_list=True))
         return message
 
     @classmethod
@@ -143,7 +145,7 @@ class MessageDecoder(object):
             raise MessageDecodeError("Message is too short")
         length, flags, crc, = struct.unpack(HEADER_FORMAT, buf[0:HEADER_LENGTH])  # unpack header in network B/O
         buf = buf[HEADER_LENGTH:]
-        expected = binascii.crc32(buf)
+        expected = binascii.crc32(buf) & 0xffffffff  # https://docs.python.org/3/library/binascii.html#binascii.crc32
         if crc != expected:
             raise MessageChecksumError("Message checksum mismatch: 0x%X != 0x%X" % (crc, expected))
         return cls._deserialize(buf)
@@ -162,24 +164,26 @@ class MessageEncoder(object):
             if field_type is not None:
                 data.extend(cls._serialize_internal(attr))
             else:
-                if isinstance(attr, collections.Sequence) and not isinstance(attr, (str, unicode)):
+                if isinstance(attr, six.string_types) or isinstance(attr, six.binary_type):
+                    data.append(attr)
+                elif isinstance(attr, collections.Sequence):
                     data.append([cls._serialize_internal(i) for i in attr])
                 elif isinstance(attr, collections.Mapping):
-                    data.append({k: cls._serialize_internal(v) for k, v in attr.iteritems()})
+                    data.append({k: cls._serialize_internal(v) for k, v in six.iteritems(attr)})
                 else:
                     data.append(attr)
         return data
 
     @classmethod
     def _serialize(cls, msg):
-        return msgpack.packb(cls._serialize_internal(msg))
+        return msgpack.packb(cls._serialize_internal(msg), use_bin_type=True, encoding='utf-8')
 
     @classmethod
     def encode(cls, msg):
         # TODO: encryption
         # TODO: compression
         raw = cls._serialize(msg)
-        crc = binascii.crc32(raw)
+        crc = binascii.crc32(raw) & 0xffffffff  # https://docs.python.org/3/library/binascii.html#binascii.crc32
         flags = 0
         length = len(raw) + HEADER_LENGTH
         header = struct.pack(HEADER_FORMAT, length, flags, crc)  # pack header in network B/O
@@ -189,19 +193,51 @@ class MessageEncoder(object):
 class PingMessage(Message):
     _fields_ = [
         "seq",
-        "node"
+        "target",
+        "messages"
     ]
+
+    def __init__(self, seq, target, messages=None):
+        """
+        Create new instance of the PingMessage class
+        :param seq: sequence number
+        :param target: target node
+        :param messages: messages to piggy-back
+        :return None
+        """
+        super(PingMessage, self).__init__(seq, target, messages)
+
+
+class PingRequestMessage(Message):
+    _fields_ = [
+        "seq",
+        "target",
+        "messages",
+    ]
+
+    def __init__(self, seq, target, messages=None):
+        """
+        Create new instance of the PingRequestMessage class
+        :param seq: sequence number
+        :param target: target node
+        :param messages: messages to piggy-back
+        :type target: tattle.state.NodeState
+        :return None
+        """
+        super(PingRequestMessage, self).__init__(seq, target.name, messages)
 
 
 class AckMessage(Message):
     _fields_ = [
-        "seq"
+        "seq",
+        "messages"
     ]
 
 
 class NackMessage(Message):
     _fields_ = [
-        "seq"
+        "seq",
+        "messages"
     ]
 
 
