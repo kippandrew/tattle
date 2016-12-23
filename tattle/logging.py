@@ -7,16 +7,19 @@ import logging.config
 import sys
 
 
-def get_logger(name=None, level=None):
+def get_logger(name, level=None, context=True):
     logger = logging.getLogger(name)
     if level is not None:
         logger.setLevel(level)
-    return LogPrefixAdapter(logger)
+    # wrap the logger if context is enabled
+    return LogPrefixAdapter(logger) if context else logger
 
 
 def init_logger(level=logging.DEBUG):
     # clear existing handlers
     logging._handlers = []
+
+    # configure root logger
     logger = logging.getLogger()
     formatter = ConsoleLogFormatter(fmt='[$COLOR%(levelname)s$RESET] [%(asctime)s] [$COLOR%(name)s$RESET] %(message)s')
     handler = logging.StreamHandler(stream=sys.stdout)
@@ -28,6 +31,8 @@ def init_logger(level=logging.DEBUG):
 
 
 def LogPrefixContext(prefix):
+    """Factory to create LogPrefix context managers"""
+
     @contextlib.contextmanager
     def _context_manager():
         LogPrefixAdapter.prefix = prefix
