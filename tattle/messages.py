@@ -226,6 +226,7 @@ class AliveMessage(Message):
         "node",  # node name
         "address",
         "port",
+        "protocol",
         "incarnation"
     ]
 
@@ -239,6 +240,7 @@ class RemoteNodeState(BaseMessage):
         "node",
         "address",
         "port",
+        "protocol",
         "incarnation",
         "status"
     ]

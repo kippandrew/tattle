@@ -44,5 +44,6 @@ class Gossip(object):
 
             for m in pending_messages:
 
+                LOG.debug("Gossip message to %s: %s", node.name, m)
                 yield conn.send(messages.MessageEncoder.encode(m))
 

@@ -115,8 +115,8 @@ class Cluster(object):
                 return self._udp_listener.local_port
 
     @property
-    def _get_local_node_name(self):
-        return "{name}:{port}".format(name=self.config.node_name, port=self.local_node_port)
+    def local_node_name(self):
+        return self.config.node_name
 
     @gen.coroutine
     def run(self):
@@ -125,13 +125,13 @@ class Cluster(object):
         :return:
         """
 
-        local_node_name = self._get_local_node_name
-        yield self._nodes.set_local_node(local_node_name,
+        yield self._nodes.set_local_node(self.local_node_name,
                                          self.local_node_address,
-                                         self.local_node_port,
-                                         self._node_seq.increment())
+                                         self.local_node_port)
 
         self._gossip.start()
+
+        LOG.info("Node started")
         # self._probe.start()
         # yield self._start_schedulers()
 
@@ -146,7 +146,7 @@ class Cluster(object):
         # gather list of nodes to sync
         LOG.debug("Resolving %d nodes", len(nodes))
         sync_nodes = yield [self._resolve_node_address(n) for n in nodes]
-        LOG.debug("Attempting to sync %d nodes", len(sync_nodes))
+        LOG.debug("Attempting to join %d nodes", len(sync_nodes))
 
         # sync nodes
         results = yield [self._sync_node(node_addr) for node_addr in sync_nodes]
@@ -194,7 +194,8 @@ class Cluster(object):
         new_state = state.NodeState(remote_state.node,
                                     remote_state.address,
                                     remote_state.port,
-                                    incarnation=remote_state.incarnation)
+                                    remote_state.protocol)
+        new_state.incarnation = remote_state.incarnation
         new_state.status = remote_state.status
         yield self._nodes.merge(new_state)
 
@@ -207,6 +208,7 @@ class Cluster(object):
             local_state.append(messages.RemoteNodeState(node.name,
                                                         node.address,
                                                         node.port,
+                                                        node.protocol,
                                                         node.incarnation,
                                                         node.status))
 
@@ -394,10 +396,14 @@ class Cluster(object):
     def _handle_alive_message(self, message, addr):
         LOG.debug("Handling ALIVE message: node=%s", message.node)
 
-        yield self._nodes.on_node_alive(state.NodeState(message.node,
-                                                        message.address,
-                                                        message.port,
-                                                        incarnation=message.incarnation))
+        new_state = state.NodeState(message.node,
+                                    message.address,
+                                    message.port,
+                                    message.protocol)
+
+        new_state.incarnation = message.incarnation
+
+        yield self._nodes.on_node_alive(new_state)
 
     @gen.coroutine
     def _handle_suspect_message(self, message, addr):
