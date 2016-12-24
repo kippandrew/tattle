@@ -11,8 +11,6 @@ def get_logger(name, level=None, context=True):
     logger = logging.getLogger(name)
     if level is not None:
         logger.setLevel(level)
-    if context:
-        logger.addFilter(LogContextFilter())
     return logger
 
 
@@ -24,6 +22,7 @@ def init_logger(level=logging.DEBUG):
     logger = logging.getLogger()
     formatter = ConsoleLogFormatter('[%(context)s] [%(asctime)s] [$COLOR%(name)s$RESET] %(message)s')
     handler = logging.StreamHandler(stream=sys.stdout)
+    handler.addFilter(LogContextFilter())
     handler.setFormatter(formatter)
     handler.setLevel(level)
     logger.setLevel(logging.NOTSET)
