@@ -5,10 +5,8 @@ from tornado import testing
 
 from tattle import network
 
-from tests import fixture
 
-
-class AbstractNetworkTestCase(fixture.AbstractTestCase):
+class AbstractNetworkTestCase(testing.AsyncTestCase):
     # noinspection PyAttributeOutsideInit
     def setUp(self):
         # setup super class
@@ -54,13 +52,13 @@ class UDPConnectionTestCase(AbstractNetworkTestCase):
 
         # send message from peer1 to peer2
         peer1.sendto(b'Foo Bar', *peer2_addr)
-        data, addr = yield peer2.recvfrom()
+        data, addr = yield peer2.read_bytes(1024)
         self.assertEqual(data, b'Foo Bar')
         self.assertEqual(addr, peer1_addr)
 
         # send message from peer2 to peer1
         peer2.sendto(b'Ding Dong', *peer1_addr)
-        data, addr = yield peer1.recvfrom()
+        data, addr = yield peer1.read_bytes(1024)
         self.assertEqual(data, b'Ding Dong')
         self.assertEqual(addr, peer2_addr)
 
@@ -105,9 +103,9 @@ class UDPClientTestCase(AbstractNetworkTestCase):
         peer1.bind(*peer1_addr)
 
         # create UDPClient
-        conn = yield network.UDPClient().connect(*peer1_addr)
+        conn = network.UDPClient().connect(*peer1_addr)
         conn.send(b'foo bar')
-        received_data, addr = yield peer1.recvfrom()
+        received_data, addr = yield peer1.read_bytes(1024)
 
         self.assertEqual(b'foo bar', received_data)
 

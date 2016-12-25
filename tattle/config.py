@@ -16,8 +16,6 @@ class Configuration(object):
         self.api_port = None
         self.probe_interval = None
         self.probe_timeout = None
-        self.gossip_interval = None
-        self.gossip_nodes = None
         self.sync_interval = None
 
 
@@ -29,10 +27,8 @@ class DefaultConfiguration(Configuration):
         self.bind_port = 7900
         self.api_address = '127.0.0.1'
         self.api_port = 7800
-        self.probe_interval = 1000
+        self.probe_interval = 200
         self.probe_timeout = 200
-        self.gossip_interval = 100
-        self.gossip_nodes = 3
         self.sync_interval = 15000
 
         if self.node_name is None:

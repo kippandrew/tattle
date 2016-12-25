@@ -62,7 +62,7 @@ if __name__ == '__main__':
 
     # initialize cluster
     cluster = tattle.Cluster(config)
-    cluster.run()
+    cluster.start()
 
     # initialize apI
     server = tattle.api.APIServer(cluster)

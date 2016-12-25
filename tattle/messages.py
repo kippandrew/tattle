@@ -193,38 +193,33 @@ class MessageEncoder(object):
 class PingMessage(Message):
     _fields_ = [
         "seq",
-        "target",
-        "messages"
+        "node",
     ]
 
-    def __init__(self, seq, target, messages=None):
+    def __init__(self, seq, node):
         """
         Create new instance of the PingMessage class
         :param seq: sequence number
-        :param target: target node
-        :param messages: messages to piggy-back
+        :param node: target node
         :return None
         """
-        super(PingMessage, self).__init__(seq, target, messages)
+        super(PingMessage, self).__init__(seq, node)
 
 
 class PingRequestMessage(Message):
     _fields_ = [
         "seq",
-        "target",
-        "messages",
+        "node",
     ]
 
-    def __init__(self, seq, target, messages=None):
+    def __init__(self, seq, node):
         """
         Create new instance of the PingRequestMessage class
         :param seq: sequence number
-        :param target: target node
-        :param messages: messages to piggy-back
-        :type target: tattle.state.NodeState
+        :param node: target node
         :return None
         """
-        super(PingRequestMessage, self).__init__(seq, target.name, messages)
+        super(PingRequestMessage, self).__init__(seq, node)
 
 
 class AckMessage(Message):

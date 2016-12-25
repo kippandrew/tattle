@@ -1,7 +1,6 @@
 import unittest
 
 from tattle import messages
-from tattle import state
 
 
 class MessageEqualityTestCase(unittest.TestCase):
@@ -40,4 +39,3 @@ class MessageDecoderTestCase(unittest.TestCase):
         buf = messages.MessageEncoder.encode(orig)
         new = messages.MessageDecoder.decode(buf)
         self.assertEqual(orig, new)
-

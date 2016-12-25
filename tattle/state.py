@@ -92,11 +92,12 @@ class NodeManager(collections.Sequence):
     def merge(self, new_state):
         if new_state.status == NODE_STATUS_ALIVE:
             yield self.on_node_alive(new_state)
-        elif new_state.status == NODE_STATUS_DEAD:
+        elif new_state.status == NODE_STATUS_DEAD or new_state.status == NODE_STATUS_SUSPECT:
             # rather then declaring a node a dead immediately, mark it as suspect
             yield self.on_node_suspect(new_state)
-        elif new_state.status == NODE_STATUS_SUSPECT:
-            yield self.on_node_suspect(new_state)
+        else:
+            LOG.warn("Unknown node status: %s", new_state.status)
+            return
 
     @gen.coroutine
     def on_node_alive(self, new_state, bootstrap=True):
@@ -125,6 +126,13 @@ class NodeManager(collections.Sequence):
                 # save current state
                 self._nodes_map[new_state.name] = current_state
                 self._nodes.append(current_state)
+
+                # swap new node with a random node to ensure detection of failed node is bounded
+                random_index = random.randint(0, len(self._nodes) - 1)
+                random_node = self._nodes[random_index]
+                last_node = self._nodes[len(self._nodes) - 1]
+                self._nodes[random_index] = last_node
+                self._nodes[len(self._nodes) - 1] = random_node
 
             LOG.debug("Node: %s (current incarnation: %d, new incarnation: %d)",
                       current_state.name,
@@ -161,12 +169,15 @@ class NodeManager(collections.Sequence):
                 pass
 
             else:
+
                 # queue alive message for gossip
-                self._queue.push(messages.AliveMessage(new_state.name,
-                                                       new_state.address,
-                                                       new_state.port,
-                                                       new_state.protocol,
-                                                       new_state.incarnation))
+                alive_msg = messages.AliveMessage(new_state.name,
+                                                  new_state.address,
+                                                  new_state.port,
+                                                  new_state.protocol,
+                                                  new_state.incarnation)
+                self._queue.push(new_state.name, messages.MessageEncoder.encode(alive_msg))
+                LOG.debug("Queued message: %s", alive_msg)
 
                 # Update the state and incarnation number
                 current_state.incarnation = new_state.incarnation

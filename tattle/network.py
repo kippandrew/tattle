@@ -28,12 +28,6 @@ _ERRNO_WOULDBLOCK = (errno.EWOULDBLOCK, errno.EAGAIN)
 if hasattr(errno, "WSAEWOULDBLOCK"):
     _ERRNO_WOULDBLOCK += (errno.WSAEWOULDBLOCK,)
 
-# These errnos indicate that a connection has been abruptly terminated.
-# They should be caught and handled less noisily than other errors.
-_ERRNO_CONNRESET = (errno.ECONNRESET, errno.ECONNABORTED, errno.EPIPE, errno.ETIMEDOUT)
-if hasattr(errno, "WSAECONNRESET"):
-    _ERRNO_CONNRESET += (errno.WSAECONNRESET, errno.WSAECONNABORTED, errno.WSAETIMEDOUT)
-
 
 class TCPClient(tcpclient.TCPClient):
     """
@@ -140,12 +134,11 @@ class UDPConnection(object):
         self._socket.close()
         self._socket = None
 
-    @gen.coroutine
     def send(self, data):
         """
         Send data
         :param data:
-        :return: Future
+        :return:
         """
         return self._socket.send(data)
 
@@ -155,19 +148,19 @@ class UDPConnection(object):
         :param data:
         :param address:
         :param port:
-        :return: Future
+        :return:
         """
         return self._socket.sendto(data, (address, port))
 
-    def recvfrom(self, max_buffer_size=4096, timeout=5):
+    def read_bytes(self, max_bytes, timeout=5):
         """
         Receive data
-        :param timeout:
-        :param max_buffer_size:
+        :param max_bytes:
+        :param timeout
         :return: Future
         """
         future = self._set_read_future()
-        self._read_bytes = max_buffer_size
+        self._read_bytes = max_bytes
         if timeout > 0:
             self._read_timeout = self._ioloop.add_timeout(time.time() + timeout, self._handle_read_timeout)
         self._add_io_state(self._ioloop.READ)
@@ -255,7 +248,6 @@ class UDPClient(object):
     The UDPClient is a factory for creating UDP connections
     """
 
-    @gen.coroutine
     def connect(self, address, port):
         """
         Create a UDPConnection
@@ -265,7 +257,7 @@ class UDPClient(object):
         """
         conn = UDPConnection()
         conn.connect(address, port)
-        raise gen.Return(conn)
+        return conn
 
 
 class UDPListener(object):
@@ -273,7 +265,8 @@ class UDPListener(object):
     The UDPListener listens for messages via UDP
     """
 
-    def __init__(self):
+    def __init__(self, buffer_size=1024):
+        self._buffer_size = buffer_size
         self._connection = UDPConnection()
         self._ioloop = ioloop.IOLoop.current()
         self._data_callback = None
@@ -303,7 +296,7 @@ class UDPListener(object):
         self._data_callback = stack_context.wrap(data_callback)
 
         # wait for data
-        self._ioloop.add_future(self._connection.recvfrom(timeout=0), self._handle_data)
+        self._ioloop.add_future(self._connection.read_bytes(self._buffer_size, timeout=0), self._handle_data)
 
     def stop(self):
         """
@@ -338,4 +331,4 @@ class UDPListener(object):
             LOG.exception("Error handling data")
 
         # wait for data
-        self._ioloop.add_future(self._connection.recvfrom(timeout=0), self._handle_data)
+        self._ioloop.add_future(self._connection.read_bytes(self._buffer_size, timeout=0), self._handle_data)

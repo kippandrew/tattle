@@ -1,15 +1,18 @@
+import io
 import struct
 
+import six
+
 from tornado import gen
+from tornado import ioloop
 from tornado import iostream
 from tornado import netutil
 
-from tattle import broadcast
-from tattle import gossip
 from tattle import logging
 from tattle import messages
 from tattle import network
 from tattle import state
+from tattle import queue
 from tattle import utils
 
 __all__ = [
@@ -27,9 +30,10 @@ class Cluster(object):
         :type config: tattle.config.Configuration
         """
         self.config = config
+        self._ioloop = ioloop.IOLoop.current()
+        # self._leaving = False
         self._ping_seq = utils.Sequence()
         self._node_seq = utils.Sequence()
-        self._leaving = False
 
         # init resolver
         self._resolver = netutil.Resolver()
@@ -38,21 +42,14 @@ class Cluster(object):
         self._udp_listener = self._init_listener_udp()
         self._tcp_listener = self._init_listener_tcp()
 
-        # # init clients
-        # self._udp_client = self._init_client_udp()
-        # self._tcp_client = self._init_client_tcp()
-
         # init queue
-        self._queue = self._init_broadcast_queue()
+        self._queue = self._init_queue()
 
         # initialize node manager
-        self._nodes = state.NodeManager(self._queue)
-
-        # init gossip
-        self._gossip = self._init_gossip()
+        self._nodes = self._init_state()
 
         # init probe
-        self._probe = self._init_probe()
+        self._init_probe()
 
     def _init_listener_udp(self):
         udp_listener = network.UDPListener()
@@ -64,7 +61,7 @@ class Cluster(object):
     def _init_listener_tcp(self):
         tcp_listener = network.TCPListener()
         tcp_listener.listen(self.config.bind_port, self.config.bind_address)
-        tcp_listener.start(self._handle_tcp_stream)
+        tcp_listener.start(self._handle_tcp_connection)
         LOG.debug("Started TCPListener. Listening on tcp %s:%d", tcp_listener.local_address, tcp_listener.local_port)
         return tcp_listener
 
@@ -76,19 +73,79 @@ class Cluster(object):
         tcp_client = network.TCPClient()
         return tcp_client
 
-    def _init_broadcast_queue(self):
-        queue = broadcast.BroadcastQueue()
-        return queue
+    def _init_queue(self):
+        q = queue.MessageQueue()
+        return q
 
-    def _init_gossip(self):
-        broadcaster = gossip.Gossip(self._queue,
-                                    self._nodes,
-                                    self.config.gossip_interval,
-                                    self.config.gossip_nodes)
-        return broadcaster
+    def _init_state(self):
+        nodes = state.NodeManager(self._queue)
+        return nodes
 
     def _init_probe(self):
-        pass
+        self._probe_schedule = ioloop.PeriodicCallback(self._do_probe,
+                                                       self.config.probe_interval)
+        self._probe_index = 0
+        self._probe_status = dict()
+
+    def _do_probe(self):
+        """
+        Handle the probe_schedule periodic callback
+        """
+        node = None
+        checked = 0
+
+        # only check as many nodes as exist
+        while checked < len(self._nodes):
+
+            # handle wrap around
+            if self._probe_index >= len(self._nodes):
+                self._probe_index = 0
+                continue
+
+            node = self._nodes[self._probe_index]
+
+            if node == self._nodes.local_node:
+                skip = True  # skip local node
+            elif node.status == state.NODE_STATUS_DEAD:
+                skip = True  # skip dead nodes
+            else:
+                skip = False
+
+            self._probe_index += 1
+
+            # keep checking
+            if skip:
+                checked += 1
+                continue
+
+            break
+
+        if node is not None:
+
+            def _handle_future(f):
+                error = f.exception()
+                if error:
+                    LOG.error("Error running probe", exc_info=f.exc_info())
+
+            try:
+                self._ioloop.add_future(self._probe_node(node), _handle_future)
+            except Exception:
+                LOG.exception("Error starting probe")
+
+    @gen.coroutine
+    def _probe_node(self, node):
+        """
+        Probe a node
+        :param node: target node
+        :type node: state.NodeState
+        """
+        LOG.debug("Probing node: %s", node.name)
+
+        # send ping message
+        ping = messages.PingMessage(self._ping_seq.increment(), node.name)
+
+        self._send_message(node, ping)
+
 
     @property
     def local_node_address(self):
@@ -119,21 +176,31 @@ class Cluster(object):
         return self.config.node_name
 
     @gen.coroutine
-    def run(self):
+    def start(self):
         """
-        Create a cluster on this node.
-        :return:
+        Start cluster on this node.
         """
 
         yield self._nodes.set_local_node(self.local_node_name,
                                          self.local_node_address,
                                          self.local_node_port)
 
-        self._gossip.start()
+        # start probe
+        self._probe_schedule.start()
 
         LOG.info("Node started")
-        # self._probe.start()
-        # yield self._start_schedulers()
+
+    @gen.coroutine
+    def stop(self):
+        """
+        Shutdown this node. This will cause this node to appear dead to other nodes.
+        """
+        self._probe_schedule.stop()
+
+        self._tcp_listener.stop()
+
+        self._udp_listener.stop()
+        LOG.info("Shut down")
 
     @gen.coroutine
     def join(self, nodes):
@@ -174,15 +241,6 @@ class Cluster(object):
     def ping(self, node):
         pass
 
-    @gen.coroutine
-    def shutdown(self):
-        """
-        Shutdown this node. This will cause this node to appear dead to other nodes.
-        :return: None
-        """
-        self._gossip.stop()
-        LOG.info("Shut down")
-
     @property
     def members(self):
         return self._nodes
@@ -219,26 +277,26 @@ class Cluster(object):
 
     @gen.coroutine
     def _sync_node(self, node_addr):
-        stream = None
+        connection = None
         try:
 
             # connect to node
             try:
-                stream = yield network.TCPClient().connect(*node_addr)
+                connection = yield network.TCPClient().connect(*node_addr)
             except Exception as ex:
                 LOG.error("Error connecting to node %s: %s", node_addr, ex)
                 return
 
             # send local state
             try:
-                yield self._send_local_state(stream)
+                yield self._send_local_state(connection)
             except IOError:
                 LOG.exception("Error sending remote state")
                 return
 
             # read remote state
             try:
-                remote_sync_message = yield self._read_and_decode_message(stream)
+                remote_sync_message = self._decode_message((yield self._read_tcp_message(connection)))
             except IOError:
                 LOG.exception("Error receiving remote state")
                 return
@@ -252,7 +310,7 @@ class Cluster(object):
             return
 
         finally:
-            stream.close()
+            connection.close()
 
         raise gen.Return(node_addr)
 
@@ -265,7 +323,7 @@ class Cluster(object):
             raise gen.Return(node_addr)
 
         # if node_addr is a string assume its host or host:port
-        elif isinstance(node_addr, (str, unicode)):
+        elif isinstance(node_addr, six.string_types):
             # get port from node
             if ':' in node_addr:
                 host, _, port = node_addr.split(':')
@@ -279,26 +337,43 @@ class Cluster(object):
             raise ValueError(node_addr, "Unknown node address format: %s", node_addr)
 
     @gen.coroutine
-    def _read_message(self, stream):
-        data = bytes()
+    def _read_tcp_message(self, stream):
+        """
+        Read a message from a stream asynchronously
+        :type stream: tornado.iostream.BaseIOStream
+        :rtype: bytes
+        """
+        buf = bytes()
         LOG.debug("Reading message header %d bytes", messages.HEADER_LENGTH)
-        data += yield stream.read_bytes(messages.HEADER_LENGTH)
-
-        length, flags, crc = struct.unpack(messages.HEADER_FORMAT, data[0:messages.HEADER_LENGTH])
-
+        buf += yield stream.read_bytes(messages.HEADER_LENGTH)
+        if not buf:
+            return
+        length, _, _ = self._decode_message_header(buf)
         LOG.debug("Reading message %d bytes", length)
-        data += yield stream.read_bytes(length - messages.HEADER_LENGTH)
-        raise gen.Return(data)
+        buf += yield stream.read_bytes(length - messages.HEADER_LENGTH)
+        raise gen.Return(buf)
 
-    @gen.coroutine
-    def _read_and_decode_message(self, stream):
-        data = yield self._read_message(stream)
-        message = self._decode_message(data)
-        raise gen.Return(message)
+    def _read_udp_message(self, stream):
+        """
+        Read a message from a stream synchronously
+        :type stream: io.BufferedReader
+        """
+        buf = bytes()
+        LOG.debug("Reading message header %d bytes", messages.HEADER_LENGTH)
+        buf += stream.read(messages.HEADER_LENGTH)
+        if not buf:
+            return None
+        length, _, _ = self._decode_message_header(buf)
+        LOG.debug("Reading message %d bytes", length)
+        buf += stream.read(length - messages.HEADER_LENGTH)
+        return buf
 
-    def _decode_message(self, data):
+    def _decode_message_header(self, raw):
+        return struct.unpack(messages.HEADER_FORMAT, raw)
+
+    def _decode_message(self, raw):
         try:
-            msg = messages.MessageDecoder.decode(data)
+            msg = messages.MessageDecoder.decode(raw)
             LOG.debug("Decoded message: %s", msg)
             return msg
         except messages.MessageDecodeError as e:
@@ -310,27 +385,53 @@ class Cluster(object):
         LOG.debug("Encoded message: %s (%d bytes)", msg, len(data))
         return data
 
+    def _queue_message(self, msg):
+        self._queue.push(msg.node, self._encode_message(msg))
+        LOG.debug("Queued message: %s", msg)
+
+    def _send_message(self, node, msg):
+        LOG.debug("Sending %s to %s", msg, node.name)
+
+        connection = network.UDPClient().connect(node.address, node.port)
+
+        # encode message
+        buf = bytes()
+        buf += self._encode_message(msg)
+
+        # gather gossip messages (already encoded)
+        gossip = self._queue.fetch(utils.retransmitLimit(len(self._nodes), 3), 1024 - len(buf))
+        LOG.debug("Sending %d gossip messages to %s", len(gossip), node.name)
+
+        for g in gossip:
+            buf += g
+
+        # send message
+        connection.send(buf)
+
     @gen.coroutine
-    def _handle_tcp_stream(self, stream, addr):
+    def _handle_tcp_connection(self, stream, client):
         try:
             # read until closed
             while True:
 
                 try:
-                    data = yield self._read_message(stream)
+                    raw = yield self._read_tcp_message(stream)
                 except iostream.StreamClosedError:
                     break
                 except IOError:
                     LOG.exception("Error reading stream")
                     break
 
+                if raw is None:
+                    break
+
                 # decode the message
-                message = self._decode_message(data)
+                message = self._decode_message(raw)
                 if message is None:
                     continue
 
                 # dispatch the message
-                yield self._handle_tcp_message(message, addr, stream)
+                yield self._handle_tcp_message(message, client, stream)
 
         except Exception:
             LOG.exception("Error handling TCP stream")
@@ -338,10 +439,11 @@ class Cluster(object):
 
     # noinspection PyTypeChecker
     @gen.coroutine
-    def _handle_tcp_message(self, message, addr, stream):
+    def _handle_tcp_message(self, message, client, stream):
+        LOG.debug("Handling TCP message from %s", client)
         try:
             if isinstance(message, messages.SyncMessage):
-                yield self._handle_sync_message(message, addr, stream)
+                yield self._handle_sync_message(message, stream)
             else:
                 LOG.warn("Unknown message type: %r", message.__class__)
                 return
@@ -350,7 +452,7 @@ class Cluster(object):
             return
 
     @gen.coroutine
-    def _handle_sync_message(self, message, addr, stream):
+    def _handle_sync_message(self, message, stream):
         LOG.debug("Handling SYNC message: nodes=%s", message.nodes)
 
         # merge remote state
@@ -365,35 +467,60 @@ class Cluster(object):
             return
 
     @gen.coroutine
-    def _handle_udp_data(self, data, addr):
+    def _handle_udp_data(self, data, client):
+        try:
 
-        # decode the message
-        message = self._decode_message(data)
-        if message is None:
+            # create a buffered reader
+            reader = io.BufferedReader(io.BytesIO(data))
+
+            # read until closed
+            while True:
+
+                try:
+                    raw = self._read_udp_message(reader)
+                except IOError:
+                    LOG.exception("Error reading stream")
+                    break
+
+                if raw is None:
+                    break
+
+                # decode the message
+                msg = self._decode_message(raw)
+                if msg is None:
+                    continue
+
+                # dispatch the message
+                yield self._handle_udp_message(msg, client)
+
+        except Exception:
+            LOG.exception("Error handling UDP data")
             return
-
-        # dispatch the message
-        yield self._handle_udp_message(message, addr)
 
     # noinspection PyTypeChecker
     @gen.coroutine
-    def _handle_udp_message(self, message, addr):
+    def _handle_udp_message(self, message, client):
+        LOG.debug("Handling UDP message from %s", client)
         try:
             if isinstance(message, messages.AliveMessage):
-                yield self._handle_alive_message(message, addr)
+                yield self._handle_alive_message(message)
             elif isinstance(message, messages.SuspectMessage):
-                yield self._handle_suspect_message(message, addr)
+                yield self._handle_suspect_message(message)
             elif isinstance(message, messages.DeadMessage):
-                yield self._handle_dead_message(message, addr)
+                yield self._handle_dead_message(message)
+            elif isinstance(message, messages.PingMessage):
+                yield self._handle_ping_message(message)
+            elif isinstance(message, messages.PingRequestMessage):
+                yield self._handle_ping_request_message(message)
             else:
                 LOG.warn("Unknown message type: %r", message.__class__)
                 return
         except:
-            LOG.exception("Error handling UDP message")
+            LOG.exception("Error dispatching UDP message")
             return
 
     @gen.coroutine
-    def _handle_alive_message(self, message, addr):
+    def _handle_alive_message(self, message):
         LOG.debug("Handling ALIVE message: node=%s", message.node)
 
         new_state = state.NodeState(message.node,
@@ -406,9 +533,17 @@ class Cluster(object):
         yield self._nodes.on_node_alive(new_state)
 
     @gen.coroutine
-    def _handle_suspect_message(self, message, addr):
+    def _handle_suspect_message(self, message):
         LOG.debug("Handling SUSPECT message: node=%s", message.node)
 
     @gen.coroutine
-    def _handle_dead_message(self, message, addr):
+    def _handle_dead_message(self, message):
         LOG.debug("Handling DEAD message: node=%s", message.node)
+
+    @gen.coroutine
+    def _handle_ping_message(self, message):
+        LOG.debug("Handling PING message: node=%s", message.node)
+
+    @gen.coroutine
+    def _handle_ping_request_message(self, message):
+        LOG.debug("Handling PING-REQ message: node=%s", message.node)

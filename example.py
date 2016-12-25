@@ -38,7 +38,7 @@ def configure_node():
 @gen.coroutine
 def create_node(config):
     node = tattle.Cluster(config)
-    yield node.run()
+    yield node.start()
     raise gen.Return(node)
 
 
@@ -68,26 +68,29 @@ def run():
 
     yield gen.sleep(1)
 
-    print(node1.config.node_name, list(node1.members))
-    print(node2.config.node_name, list(node2.members))
-    print(node3.config.node_name, list(node3.members))
+    # print(node1.config.node_name, list(node1.members))
+    # print(node2.config.node_name, list(node2.members))
+    # print(node3.config.node_name, list(node3.members))
 
     run_with_node_context(node4, join_node, node4, [node1])
     yield gen.sleep(1)
 
-    print(node1.config.node_name, list(node1.members))
-    print(node2.config.node_name, list(node2.members))
-    print(node3.config.node_name, list(node3.members))
-    print(node4.config.node_name, list(node4.members))
+    # print(node1.config.node_name, list(node1.members))
+    # print(node2.config.node_name, list(node2.members))
+    # print(node3.config.node_name, list(node3.members))
+    # print(node4.config.node_name, list(node4.members))
 
-    run_with_node_context(node5, join_node, node5, [node4])
+    run_with_node_context(node5, join_node, node5, [node1])
     yield gen.sleep(1)
 
-    print(node1.config.node_name, list(node1.members))
-    print(node2.config.node_name, list(node2.members))
-    print(node3.config.node_name, list(node3.members))
-    print(node4.config.node_name, list(node4.members))
-    print(node5.config.node_name, list(node5.members))
+    while True:
+        print(node1.config.node_name, list(node1.members))
+        print(node2.config.node_name, list(node2.members))
+        print(node3.config.node_name, list(node3.members))
+        print(node4.config.node_name, list(node4.members))
+        print(node5.config.node_name, list(node5.members))
+
+        yield gen.sleep(1)
 
 
 # init logging
