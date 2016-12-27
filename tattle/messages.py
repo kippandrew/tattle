@@ -226,15 +226,13 @@ class PingRequestMessage(Message):
 
 class AckMessage(Message):
     _fields_ = [
-        "seq",
-        "messages"
+        "seq"
     ]
 
 
 class NackMessage(Message):
     _fields_ = [
-        "seq",
-        "messages"
+        "seq"
     ]
 
 
