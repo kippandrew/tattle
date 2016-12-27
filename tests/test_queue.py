@@ -4,34 +4,61 @@ from tattle import queue
 
 
 class MessageQueueTestCase(unittest.TestCase):
-    def test_queue(self):
-        mq = queue.MessageQueue(10)
+    def test_push(self):
+        q = queue.MessageQueue()
 
-        mq.push('node1', b'node1 message')
-        mq.push('node2', b'node2 message')
+        q.push('node1', b'node1 message')
+        q.push('node2', b'node2 message')
 
-        self.assertEqual(len(mq), 2)
+        self.assertEqual(len(q), 2)
 
-        mq.push('node1', b'node1 updated')
-        mq.push('node3', b'node3 message')
+        q.push('node1', b'node1 updated')
+        q.push('node3', b'node3 message')
 
-        self.assertEqual(len(mq), 3)
+        self.assertEqual(len(q), 3)
 
-        msg = mq.pop(3)
+    def test_pop(self):
+        q = queue.MessageQueue()
+        q.push('node1', b'node1 message')
+        q.push('node2', b'node2 message')
+        q.push('node1', b'node1 updated')
+        q.push('node3', b'node3 message')
+
+        msg = q.pop(3)
         self.assertEqual(msg, b'node3 message')
 
-        msg = mq.pop(3)
+        msg = q.pop(3)
         self.assertEqual(msg, b'node1 updated')
 
-        msg = mq.pop(3)
+        msg = q.pop(3)
         self.assertEqual(msg, b'node2 message')
 
-        mq.pop(3) # pop node-3
-        mq.pop(3) # pop node-1
-        mq.pop(3) # pop node-2
-        mq.pop(3) # pop node-3
-        mq.pop(3) # pop node-1
-        mq.pop(3) # pop node-2
+        q.pop(3)  # pop node-3
+        q.pop(3)  # pop node-1
+        q.pop(3)  # pop node-2
+        q.pop(3)  # pop node-3
+        q.pop(3)  # pop node-1
+        q.pop(3)  # pop node-2
 
-        msg = mq.pop(3)
+        msg = q.pop(3)
         self.assertIsNone(msg)
+
+    def test_fetch(self):
+
+        q = queue.MessageQueue()
+        q.push('node1', b'node1 message')
+        q.push('node2', b'node2 message')
+        q.push('node1', b'node1 updated')
+        q.push('node3', b'node3 message')
+
+        messages = q.fetch(3, 30)
+        self.assertEqual(messages, [b'node3 message', b'node1 updated'])
+
+        messages = q.fetch(3, 40)
+        self.assertEqual(messages, [b'node2 message', b'node3 message', b'node1 updated'])
+
+        messages = q.fetch(3, 40)
+        self.assertEqual(messages, [b'node2 message', b'node3 message', b'node1 updated'])
+
+        messages = q.fetch(3, 40)
+        self.assertEqual(messages, [b'node2 message'])
