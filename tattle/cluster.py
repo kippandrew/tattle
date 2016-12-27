@@ -13,7 +13,7 @@ from tattle import messages
 from tattle import network
 from tattle import state
 from tattle import queue
-from tattle import utils
+from tattle import utilities
 
 __all__ = [
     'Cluster'
@@ -32,8 +32,8 @@ class Cluster(object):
         self.config = config
         self._ioloop = ioloop.IOLoop.current()
         # self._leaving = False
-        self._ping_seq = utils.Sequence()
-        self._node_seq = utils.Sequence()
+        self._ping_seq = utilities.Sequence()
+        self._node_seq = utilities.Sequence()
 
         # init resolver
         self._resolver = netutil.Resolver()
@@ -154,7 +154,7 @@ class Cluster(object):
             return node.name != self.local_node_name and n.status != state.NODE_STATUS_DEAD
 
         # send indirect ping to k nodes
-        for indirect_node in utils.select_random_nodes(3, self._nodes, _filter_indirect_node):
+        for indirect_node in utilities.select_random_nodes(3, self._nodes, _filter_indirect_node):
             LOG.debug("Probing node: %s via %s", node.name, indirect_node.name)
 
             # send ping request  message
@@ -231,7 +231,7 @@ class Cluster(object):
 
         # sync nodes
         results = yield [self._sync_node(node_addr) for node_addr in sync_nodes]
-        successful_nodes, failed_nodes = utils.partition(lambda s: s is not None, results)
+        successful_nodes, failed_nodes = utilities.partition(lambda s: s is not None, results)
         LOG.debug("Successfully synced %d nodes (%d failed)", len(successful_nodes), len(failed_nodes))
 
     @gen.coroutine
@@ -409,7 +409,7 @@ class Cluster(object):
         buf += self._encode_message(msg)
 
         # gather gossip messages (already encoded)
-        gossip = self._queue.fetch(utils.calculate_transmit_limit(len(self._nodes), 3), 1024 - len(buf))
+        gossip = self._queue.fetch(utilities.calculate_transmit_limit(len(self._nodes), 3), 1024 - len(buf))
         LOG.trace("Sending %d gossip messages to %s", len(gossip), node.name)
 
         for g in gossip:

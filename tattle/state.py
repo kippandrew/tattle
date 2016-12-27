@@ -1,5 +1,4 @@
 import collections
-import random
 import time
 
 from tornado import gen
@@ -7,7 +6,7 @@ from tornado import locks
 
 from tattle import logging
 from tattle import messages
-from tattle import utils
+from tattle import utilities
 
 __all__ = [
     'NodeState',
@@ -53,7 +52,7 @@ class NodeManager(collections.Sequence):
         self._nodes_map = dict()
         self._nodes_lock = locks.Lock()
         self._local_node_name = None
-        self._local_node_seq = utils.Sequence()
+        self._local_node_seq = utilities.Sequence()
         self._queue = queue
 
     def __getitem__(self, index):
@@ -128,7 +127,7 @@ class NodeManager(collections.Sequence):
                 self._nodes.append(current_state)
 
                 # swap new node with a random node to ensure detection of failed node is bounded
-                self._nodes = utils.swap_random_nodes(self._nodes)
+                self._nodes = utilities.swap_random_nodes(self._nodes)
 
             LOG.debug("Node: %s (current incarnation: %d, new incarnation: %d)",
                       current_state.name,
