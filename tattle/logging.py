@@ -6,8 +6,31 @@ import logging.config
 
 import sys
 
+TRACE = 5
 
-def get_logger(name, level=None, context=True):
+
+class TraceLogger(logging.getLoggerClass()):
+    def __init__(self, name, level=logging.NOTSET):
+        super(TraceLogger, self).__init__(name, level)
+
+    def trace(self, msg, *args, **kwargs):
+        if self.isEnabledFor(TRACE):
+            self._log(TRACE, msg, args, **kwargs)
+
+
+logging.addLevelName(TRACE, "TRACE")
+logging.setLoggerClass(TraceLogger)
+
+
+def get_logger(name, level=None):
+    """
+    Return a logger with the given name
+    :param name:
+    :param level:
+    :param context:
+    :return:
+    :rtype: TraceLogger
+    """
     logger = logging.getLogger(name)
     if level is not None:
         logger.setLevel(level)
@@ -20,7 +43,7 @@ def init_logger(level=logging.DEBUG):
 
     # configure root logger
     logger = logging.getLogger()
-    formatter = ConsoleLogFormatter('[%(context)s] [%(asctime)s] [$COLOR%(name)s$RESET] %(message)s')
+    formatter = ConsoleLogFormatter('[%(context)s] [%(asctime)s] [$LEVEL%(name)s$RESET] %(message)s')
     handler = logging.StreamHandler(stream=sys.stdout)
     handler.addFilter(LogContextFilter())
     handler.setFormatter(formatter)
@@ -28,6 +51,11 @@ def init_logger(level=logging.DEBUG):
     logger.setLevel(logging.NOTSET)
     logger.addHandler(handler)
     return logger
+
+
+# from logging import getLoggerClass, addLevelName, setLoggerClass, NOTSET
+
+
 
 
 # noinspection PyPep8Naming
@@ -52,21 +80,16 @@ class LogContextFilter(logging.Filter):
 
 
 class ConsoleLogFormatter(logging.Formatter):
-    BLACK, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, WHITE = range(8)
+    BLACK, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, LIGHT_GRAY = range(30, 38)
+    DARK_GRAY, LIGHT_RED, LIGHT_GREEN, LIGHT_YELLOW, LIGHT_BLUE, LIGHT_MAGENTA, LIGHT_CYAN, WHITE = range(90, 98)
 
-    COLORS = {
-        'WARNING': MAGENTA,
+    LEVELS = {
+        'VERBOSE': DARK_GRAY,
+        'DEBUG': LIGHT_GRAY,
         'INFO': GREEN,
-        'DEBUG': WHITE,
+        'WARNING': MAGENTA,
         'CRITICAL': RED,
         'ERROR': RED,
-        'RED': RED,
-        'GREEN': GREEN,
-        'YELLOW': YELLOW,
-        'BLUE': BLUE,
-        'MAGENTA': MAGENTA,
-        'CYAN': CYAN,
-        'WHITE': WHITE,
     }
 
     RESET_SEQ = "\033[0m"
@@ -78,14 +101,9 @@ class ConsoleLogFormatter(logging.Formatter):
 
     def format(self, record):
         levelname = record.levelname
-        color = self.COLOR_SEQ % (30 + self.COLORS[levelname])
+        level_color = self.COLOR_SEQ % (self.LEVELS[levelname])
         message = logging.Formatter.format(self, record)
-        message = message.replace("$RESET", self.RESET_SEQ) \
-            .replace("$BOLD", self.BOLD_SEQ) \
-            .replace("$COLOR", color)
-
-        for k, v in self.COLORS.items():
-            message = message.replace("$" + k, self.COLOR_SEQ % (v + 30)) \
-                .replace("$BG" + k, self.COLOR_SEQ % (v + 40)) \
-                .replace("$BG-" + k, self.COLOR_SEQ % (v + 40))
+        message = message.replace("$RESET", self.RESET_SEQ)
+        message = message.replace("$BOLD", self.BOLD_SEQ)
+        message = message.replace("$LEVEL", level_color)
         return message + self.RESET_SEQ

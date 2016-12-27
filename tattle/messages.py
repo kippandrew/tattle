@@ -210,16 +210,18 @@ class PingRequestMessage(Message):
     _fields_ = [
         "seq",
         "node",
+        "from"
     ]
 
-    def __init__(self, seq, node):
+    def __init__(self, seq, target_node, from_node):
         """
         Create new instance of the PingRequestMessage class
         :param seq: sequence number
-        :param node: target node
+        :param target_node:
+        :param from_node:
         :return None
         """
-        super(PingRequestMessage, self).__init__(seq, node)
+        super(PingRequestMessage, self).__init__(seq, target_node, from_node)
 
 
 class AckMessage(Message):

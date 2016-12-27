@@ -1,6 +1,6 @@
 import collections
-import time
 import random
+import time
 
 from tornado import gen
 from tornado import locks
@@ -128,11 +128,7 @@ class NodeManager(collections.Sequence):
                 self._nodes.append(current_state)
 
                 # swap new node with a random node to ensure detection of failed node is bounded
-                random_index = random.randint(0, len(self._nodes) - 1)
-                random_node = self._nodes[random_index]
-                last_node = self._nodes[len(self._nodes) - 1]
-                self._nodes[random_index] = last_node
-                self._nodes[len(self._nodes) - 1] = random_node
+                self._nodes = utils.swap_random_nodes(self._nodes)
 
             LOG.debug("Node: %s (current incarnation: %d, new incarnation: %d)",
                       current_state.name,
@@ -196,25 +192,3 @@ class NodeManager(collections.Sequence):
 
         with (yield self._nodes_lock.acquire()):
             pass
-
-
-def select_random_nodes(k, nodes, filter_func=None):
-    selected = []
-
-    n = len(nodes)
-    k = min(k, len(nodes))
-    j = 0
-
-    while len(selected) < k and j <= (3 * n):
-        j += 1
-        node = random.choice(nodes)
-        if node in selected:
-            continue
-
-        if filter_func is not None:
-            if filter_func(node):
-                continue
-
-        selected.append(node)
-
-    return selected

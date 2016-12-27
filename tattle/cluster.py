@@ -143,9 +143,23 @@ class Cluster(object):
 
         # send ping message
         ping = messages.PingMessage(self._ping_seq.increment(), node.name)
-
         self._send_message(node, ping)
 
+        self._probe_node_indirect(node)
+
+    @gen.coroutine
+    def _probe_node_indirect(self, node):
+
+        def _filter_indirect_node(n):
+            return node.name != self.local_node_name and n.status != state.NODE_STATUS_DEAD
+
+        # send indirect ping to k nodes
+        for indirect_node in utils.select_random_nodes(3, self._nodes, _filter_indirect_node):
+            LOG.debug("Probing node: %s via %s", node.name, indirect_node.name)
+
+            # send ping request  message
+            ping_req = messages.PingRequestMessage(self._ping_seq.increment(), node.name, self.local_node_name)
+            self._send_message(indirect_node, ping_req)
 
     @property
     def local_node_address(self):
@@ -211,9 +225,9 @@ class Cluster(object):
         """
 
         # gather list of nodes to sync
-        LOG.debug("Resolving %d nodes", len(nodes))
+        LOG.trace("Resolving %d nodes", len(nodes))
         sync_nodes = yield [self._resolve_node_address(n) for n in nodes]
-        LOG.debug("Attempting to join %d nodes", len(sync_nodes))
+        LOG.trace("Attempting to join %d nodes", len(sync_nodes))
 
         # sync nodes
         results = yield [self._sync_node(node_addr) for node_addr in sync_nodes]
@@ -247,7 +261,7 @@ class Cluster(object):
 
     @gen.coroutine
     def _merge_remote_state(self, remote_state):
-        LOG.debug("Merging remote state: %s", remote_state)
+        LOG.trace("Merging remote state: %s", remote_state)
 
         new_state = state.NodeState(remote_state.node,
                                     remote_state.address,
@@ -344,12 +358,10 @@ class Cluster(object):
         :rtype: bytes
         """
         buf = bytes()
-        LOG.debug("Reading message header %d bytes", messages.HEADER_LENGTH)
         buf += yield stream.read_bytes(messages.HEADER_LENGTH)
         if not buf:
             return
         length, _, _ = self._decode_message_header(buf)
-        LOG.debug("Reading message %d bytes", length)
         buf += yield stream.read_bytes(length - messages.HEADER_LENGTH)
         raise gen.Return(buf)
 
@@ -359,12 +371,10 @@ class Cluster(object):
         :type stream: io.BufferedReader
         """
         buf = bytes()
-        LOG.debug("Reading message header %d bytes", messages.HEADER_LENGTH)
         buf += stream.read(messages.HEADER_LENGTH)
         if not buf:
             return None
         length, _, _ = self._decode_message_header(buf)
-        LOG.debug("Reading message %d bytes", length)
         buf += stream.read(length - messages.HEADER_LENGTH)
         return buf
 
@@ -374,7 +384,6 @@ class Cluster(object):
     def _decode_message(self, raw):
         try:
             msg = messages.MessageDecoder.decode(raw)
-            LOG.debug("Decoded message: %s", msg)
             return msg
         except messages.MessageDecodeError as e:
             LOG.error("Error decoding message: %s", e)
@@ -382,15 +391,16 @@ class Cluster(object):
 
     def _encode_message(self, msg):
         data = messages.MessageEncoder.encode(msg)
-        LOG.debug("Encoded message: %s (%d bytes)", msg, len(data))
+        LOG.trace("Encoded message: %s (%d bytes)", msg, len(data))
         return data
 
     def _queue_message(self, msg):
         self._queue.push(msg.node, self._encode_message(msg))
         LOG.debug("Queued message: %s", msg)
 
+    @gen.coroutine
     def _send_message(self, node, msg):
-        LOG.debug("Sending %s to %s", msg, node.name)
+        LOG.trace("Sending %s to %s", msg, node.name)
 
         connection = network.UDPClient().connect(node.address, node.port)
 
@@ -399,8 +409,8 @@ class Cluster(object):
         buf += self._encode_message(msg)
 
         # gather gossip messages (already encoded)
-        gossip = self._queue.fetch(utils.retransmitLimit(len(self._nodes), 3), 1024 - len(buf))
-        LOG.debug("Sending %d gossip messages to %s", len(gossip), node.name)
+        gossip = self._queue.fetch(utils.calculate_transmit_limit(len(self._nodes), 3), 1024 - len(buf))
+        LOG.trace("Sending %d gossip messages to %s", len(gossip), node.name)
 
         for g in gossip:
             buf += g
@@ -440,7 +450,7 @@ class Cluster(object):
     # noinspection PyTypeChecker
     @gen.coroutine
     def _handle_tcp_message(self, message, client, stream):
-        LOG.debug("Handling TCP message from %s", client)
+        LOG.trace("Handling TCP message from %s", client)
         try:
             if isinstance(message, messages.SyncMessage):
                 yield self._handle_sync_message(message, stream)
@@ -453,7 +463,7 @@ class Cluster(object):
 
     @gen.coroutine
     def _handle_sync_message(self, message, stream):
-        LOG.debug("Handling SYNC message: nodes=%s", message.nodes)
+        LOG.trace("Handling SYNC message: nodes=%s", message.nodes)
 
         # merge remote state
         for remote_state in message.nodes:
@@ -500,7 +510,7 @@ class Cluster(object):
     # noinspection PyTypeChecker
     @gen.coroutine
     def _handle_udp_message(self, message, client):
-        LOG.debug("Handling UDP message from %s", client)
+        LOG.trace("Handling UDP message from %s", client)
         try:
             if isinstance(message, messages.AliveMessage):
                 yield self._handle_alive_message(message)
@@ -521,7 +531,7 @@ class Cluster(object):
 
     @gen.coroutine
     def _handle_alive_message(self, message):
-        LOG.debug("Handling ALIVE message: node=%s", message.node)
+        LOG.trace("Handling ALIVE message: node=%s", message.node)
 
         new_state = state.NodeState(message.node,
                                     message.address,
@@ -534,16 +544,16 @@ class Cluster(object):
 
     @gen.coroutine
     def _handle_suspect_message(self, message):
-        LOG.debug("Handling SUSPECT message: node=%s", message.node)
+        LOG.trace("Handling SUSPECT message: node=%s", message.node)
 
     @gen.coroutine
     def _handle_dead_message(self, message):
-        LOG.debug("Handling DEAD message: node=%s", message.node)
+        LOG.trace("Handling DEAD message: node=%s", message.node)
 
     @gen.coroutine
     def _handle_ping_message(self, message):
-        LOG.debug("Handling PING message: node=%s", message.node)
+        LOG.trace("Handling PING message: node=%s", message.node)
 
     @gen.coroutine
     def _handle_ping_request_message(self, message):
-        LOG.debug("Handling PING-REQ message: node=%s", message.node)
+        LOG.trace("Handling PING-REQ message: node=%s", message.node)
