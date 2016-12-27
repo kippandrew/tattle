@@ -26,7 +26,7 @@ def partition(fun, iterable):
 
 
 def calculate_transmit_limit(n, m):
-    scale = math.ceil(math.log10(3 + 1))
+    scale = math.ceil(math.log10(n + 1))
     return scale * m
 
 
