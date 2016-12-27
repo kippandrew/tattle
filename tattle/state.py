@@ -99,7 +99,7 @@ class NodeManager(collections.Sequence):
             return
 
     @gen.coroutine
-    def on_node_alive(self, new_state, bootstrap=True):
+    def on_node_alive(self, new_state, bootstrap=False):
 
         # acquire node lock
         with (yield self._nodes_lock.acquire()):
@@ -129,7 +129,7 @@ class NodeManager(collections.Sequence):
                 # swap new node with a random node to ensure detection of failed node is bounded
                 self._nodes = utilities.swap_random_nodes(self._nodes)
 
-            LOG.debug("Node: %s (current incarnation: %d, new incarnation: %d)",
+            LOG.trace("Node alive %s (current incarnation: %d, new incarnation: %d)",
                       current_state.name,
                       current_state.incarnation,
                       new_state.incarnation)
@@ -146,22 +146,28 @@ class NodeManager(collections.Sequence):
 
             # bail if the incarnation number is older or the same at the current state, and this is not about us
             if not is_local_node and new_state.incarnation <= current_state.incarnation:
-                # LOG.debug("%s is older then current state: %d <= %d", new_state.name,
-                #          new_state.incarnation, current_state.incarnation)
+                LOG.trace("%s is older then current state: %d <= %d", new_state.name,
+                          new_state.incarnation, current_state.incarnation)
                 return
 
             # bail if the incarnation number is older then the current state, and this is about us
             if is_local_node and new_state.incarnation < current_state.incarnation:
-                # LOG.warn("%s is older then current state: %d < %d", new_state.name,
-                #          new_state.incarnation, current_state.incarnation)
+                LOG.trace("%s is older then current state: %d < %d", new_state.name,
+                          new_state.incarnation, current_state.incarnation)
                 return
 
             # TODO: clear suspicion timer that may be in effect
 
             # If this about us we need to refute, otherwise broadcast
             if is_local_node and not bootstrap:
+                LOG.trace("Node alive for local-node: %s", new_state.name)
+
+                # TODO: check version
+                if new_state.incarnation == current_state.incarnation:
+                    return
+
                 # TODO: refute
-                pass
+                raise NotImplementedError()
 
             else:
 
