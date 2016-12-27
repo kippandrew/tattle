@@ -6,7 +6,7 @@ import logging.config
 
 import sys
 
-TRACE = 5
+TRACE, DEBUG, INFO, WARN, ERROR, NOTSET = 5, logging.DEBUG, logging.INFO, logging.WARN, logging.ERROR, logging.NOTSET
 
 
 class TraceLogger(logging.getLoggerClass()):
@@ -27,8 +27,7 @@ def get_logger(name, level=None):
     Return a logger with the given name
     :param name:
     :param level:
-    :param context:
-    :return:
+    :return: logger
     :rtype: TraceLogger
     """
     logger = logging.getLogger(name)
@@ -51,11 +50,6 @@ def init_logger(level=logging.DEBUG):
     logger.setLevel(logging.NOTSET)
     logger.addHandler(handler)
     return logger
-
-
-# from logging import getLoggerClass, addLevelName, setLoggerClass, NOTSET
-
-
 
 
 # noinspection PyPep8Naming
@@ -84,7 +78,7 @@ class ConsoleLogFormatter(logging.Formatter):
     DARK_GRAY, LIGHT_RED, LIGHT_GREEN, LIGHT_YELLOW, LIGHT_BLUE, LIGHT_MAGENTA, LIGHT_CYAN, WHITE = range(90, 98)
 
     LEVELS = {
-        'VERBOSE': DARK_GRAY,
+        'TRACE': DARK_GRAY,
         'DEBUG': LIGHT_GRAY,
         'INFO': GREEN,
         'WARNING': MAGENTA,
