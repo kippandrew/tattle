@@ -113,7 +113,8 @@ def run():
         print(node3.config.node_name, node3.members, file=sys.stderr)
         print(node4.config.node_name, node4.members, file=sys.stderr)
         print(node5.config.node_name, node5.members, file=sys.stderr)
-        print(node5.config.node_name, node6.members, file=sys.stderr)
+        print(node6.config.node_name, node6.members, file=sys.stderr)
+        print(node7.config.node_name, node7.members, file=sys.stderr)
 
     else:
         ioloop.IOLoop.current().stop()
@@ -123,7 +124,8 @@ def run():
         print(node3.config.node_name, node3.members)
         print(node4.config.node_name, node4.members)
         print(node5.config.node_name, node5.members)
-        print(node5.config.node_name, node6.members)
+        print(node6.config.node_name, node6.members)
+        print(node7.config.node_name, node7.members)
 
 # init logging
 logger = tattle.logging.init_logger(tattle.logging.DEBUG)
