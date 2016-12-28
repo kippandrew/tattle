@@ -64,12 +64,11 @@ if __name__ == '__main__':
     cluster = tattle.Cluster(config)
     cluster.start()
 
-    # initialize apI
-    server = tattle.api.APIServer(cluster)
-    server.run()
+    # initialize API
+    api = tattle.api.APIServer(cluster)
 
-    # start httpserver
-    http = httpserver.HTTPServer(server)
+    # start http server
+    http = httpserver.HTTPServer(api)
     http.listen(config.api_port, address=config.api_address)
     LOG.info("API server listening on %s:%s", config.api_address, config.api_port)
 

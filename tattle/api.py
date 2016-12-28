@@ -29,10 +29,6 @@ class APIServer(web.Application):
 
         LOG.debug("Initialized APIServer")
 
-    @gen.coroutine
-    def run(self):
-        LOG.debug("API server is up...")
-
 
 class APIError(web.HTTPError):
     def __init__(self, status_code, error=None, **kwargs):
@@ -132,7 +128,6 @@ class DefaultAPIHandler(APIRequestHandler):
 # noinspection PyAbstractClass
 class JoinAPIHandler(APIRequestHandler):
     def post(self):
-
         nodes = self.get_json('nodes', None)
         if nodes is None or not isinstance(nodes, collections.Sequence):
             raise APIError(400, error="A list of nodes to join must be specified.")
