@@ -23,12 +23,14 @@ LOG = logging.get_logger(__name__)
 
 
 class NodeState(object):
-    def __init__(self, name, address, port, protocol=None):
+    def __init__(self, name, address, port):
         self.name = name
         self.address = address
         self.port = port
-        self.protocol = protocol
         self.incarnation = 0
+        self.protocol_version = None
+        self.protocol_max = None
+        self.protocol_min = None
         self._status = NODE_STATUS_DEAD
         self._status_change_timestamp = None
 
@@ -78,8 +80,7 @@ class NodeManager(collections.Sequence):
         # create NodeState for this node
         new_state = NodeState(local_node_name,
                               local_node_address,
-                              local_node_port,
-                              local_node_protocol)
+                              local_node_port)
 
         # set incarnation for the node
         new_state.incarnation = self._local_node_seq.increment()
@@ -119,8 +120,7 @@ class NodeManager(collections.Sequence):
                 # copy new state to current state
                 current_state = NodeState(new_state.name,
                                           new_state.address,
-                                          new_state.port,
-                                          new_state.protocol)
+                                          new_state.port)
 
                 # save current state
                 self._nodes_map[new_state.name] = current_state
@@ -172,11 +172,10 @@ class NodeManager(collections.Sequence):
             else:
 
                 # queue alive message for gossip
-                alive_msg = messages.AliveMessage(new_state.name,
-                                                  new_state.address,
-                                                  new_state.port,
-                                                  new_state.protocol,
-                                                  new_state.incarnation)
+                alive_msg = messages.AliveMessage(node=new_state.name,
+                                                  node_addr=messages.InternetAddress(new_state.address,
+                                                                                     new_state.port),
+                                                  incarnation=new_state.incarnation)
                 self._queue.push(new_state.name, messages.MessageEncoder.encode(alive_msg))
                 LOG.debug("Queued message: %s", alive_msg)
 

@@ -1,6 +1,8 @@
+import datetime
 import functools
-import logging
+import sys
 
+from tornado import concurrent
 from tornado import gen
 from tornado import ioloop
 from tornado import stack_context
@@ -55,6 +57,19 @@ def run_node():
     raise gen.Return(node)
 
 
+def wait_until_converged(nodes):
+    future = concurrent.TracebackFuture()
+
+    def _check_converged():
+        if any(len(n.members) < len(nodes) for n in nodes):
+            ioloop.IOLoop.current().add_timeout(datetime.timedelta(milliseconds=200), _check_converged)
+            return
+        future.set_result(True)
+
+    _check_converged()
+    return future
+
+
 @gen.coroutine
 def run():
     node1 = yield run_node()
@@ -62,39 +77,56 @@ def run():
     node3 = yield run_node()
     node4 = yield run_node()
     node5 = yield run_node()
+    node6 = yield run_node()
+    node7 = yield run_node()
 
-    run_with_node_context(node1, join_node, node1, [node2])
-    run_with_node_context(node1, join_node, node1, [node3])
-
+    yield run_with_node_context(node1, join_node, node1, [node2])
     yield gen.sleep(1)
 
-    # print(node1.config.node_name, list(node1.members))
-    # print(node2.config.node_name, list(node2.members))
-    # print(node3.config.node_name, list(node3.members))
-
-    run_with_node_context(node4, join_node, node4, [node1])
+    yield run_with_node_context(node3, join_node, node3, [node2])
     yield gen.sleep(1)
 
-    # print(node1.config.node_name, list(node1.members))
-    # print(node2.config.node_name, list(node2.members))
-    # print(node3.config.node_name, list(node3.members))
-    # print(node4.config.node_name, list(node4.members))
-
-    run_with_node_context(node5, join_node, node5, [node1])
+    yield run_with_node_context(node4, join_node, node4, [node1])
+    yield run_with_node_context(node5, join_node, node5, [node4])
     yield gen.sleep(1)
 
-    while True:
-        print(node1.config.node_name, list(node1.members))
-        print(node2.config.node_name, list(node2.members))
-        print(node3.config.node_name, list(node3.members))
-        print(node4.config.node_name, list(node4.members))
-        print(node5.config.node_name, list(node5.members))
+    yield run_with_node_context(node6, join_node, node6, [node5])
+    yield gen.sleep(1)
 
-        yield gen.sleep(1)
+    yield run_with_node_context(node7, join_node, node7, [node1])
+    yield gen.sleep(1)
 
+    timeout = 30
+    try:
+        yield gen.with_timeout(datetime.timedelta(seconds=timeout), wait_until_converged([node1,
+                                                                                          node2,
+                                                                                          node3,
+                                                                                          node4,
+                                                                                          node5,
+                                                                                          node6]))
+    except gen.TimeoutError:
+        ioloop.IOLoop.current().stop()
+
+        print("Failed to converge after {} seconds".format(timeout), file=sys.stderr)
+        print(node1.config.node_name, node1.members, file=sys.stderr)
+        print(node2.config.node_name, node2.members, file=sys.stderr)
+        print(node3.config.node_name, node3.members, file=sys.stderr)
+        print(node4.config.node_name, node4.members, file=sys.stderr)
+        print(node5.config.node_name, node5.members, file=sys.stderr)
+        print(node5.config.node_name, node6.members, file=sys.stderr)
+
+    else:
+        ioloop.IOLoop.current().stop()
+
+        print(node1.config.node_name, node1.members)
+        print(node2.config.node_name, node2.members)
+        print(node3.config.node_name, node3.members)
+        print(node4.config.node_name, node4.members)
+        print(node5.config.node_name, node5.members)
+        print(node5.config.node_name, node6.members)
 
 # init logging
-logger = tattle.logging.init_logger(logging.DEBUG)
+logger = tattle.logging.init_logger(tattle.logging.DEBUG)
 
 # run cluster
 run()

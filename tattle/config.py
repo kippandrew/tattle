@@ -16,7 +16,10 @@ class Configuration(object):
         self.api_port = None
         self.probe_interval = None
         self.probe_timeout = None
+        self.indirect_probes = None
         self.sync_interval = None
+        self.retransmit_multiplier = None
+        self.suspicion_multiplier = None
 
 
 class DefaultConfiguration(Configuration):
@@ -27,9 +30,10 @@ class DefaultConfiguration(Configuration):
         self.bind_port = 7900
         self.api_address = '127.0.0.1'
         self.api_port = 7800
-        self.probe_interval = 200
+        self.retransmit_multiplier = 3
+        self.probe_interval = 100
         self.probe_timeout = 200
-        self.sync_interval = 15000
+        self.indirect_probes = 1
 
         if self.node_name is None:
             self.node_name = _default_node_name()

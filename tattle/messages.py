@@ -43,7 +43,7 @@ class BaseMessage(object):
             if cls is not None:
                 # if field has a type defined it must of that type or None
                 if a is not None and not issubclass(a.__class__, cls):
-                    raise TypeError("Field must be of type: %s (is %s)" % (cls.__name__, a.__class__.__name__))
+                    raise TypeError("Field %s must be of type: %s (is %s)" % (key, cls.__name__, a.__class__.__name__))
             self.__setattr__(key, a)
 
         # assign values from kwargs
@@ -56,7 +56,7 @@ class BaseMessage(object):
             if cls is not None:
                 # if field has a type defined it must of that type or None
                 if a is not None and not issubclass(a.__class__, cls):
-                    raise TypeError("Field must be of type: %s (is %s)" % (cls.__name__, a.__class__.__name__))
+                    raise TypeError("Field %s must be of type: %s (is %s)" % (key, cls.__name__, a.__class__.__name__))
             self.__setattr__(k, a)
 
     def __repr__(self):
@@ -215,6 +215,9 @@ class InternetAddress(BaseMessage):
         else:
             return self.addr_v4
 
+    def __str__(self):
+        return "<%s %s,%d>" % (self.__class__.__name__, self.address, self.port)
+
 
 class PingMessage(Message):
     _fields_ = [
@@ -233,6 +236,9 @@ class PingMessage(Message):
         :param sender_addr: sender node address
         """
         super(PingMessage, self).__init__(seq, target, sender, sender_addr)
+
+    def __str__(self):
+        return "<%s %s>" % (self.__class__.__name__, self.node)
 
 
 class PingRequestMessage(Message):
@@ -254,6 +260,9 @@ class PingRequestMessage(Message):
         :param sender_addr: sender node address
         """
         super(PingRequestMessage, self).__init__(seq, target, target_addr, sender, sender_addr)
+
+    def __str__(self):
+        return "<%s %s>" % (self.__class__.__name__, self.node)
 
 
 class AckMessage(Message):
@@ -288,11 +297,15 @@ class DeadMessage(Message):
 class AliveMessage(Message):
     _fields_ = [
         "node",  # node name
-        "address",
-        "port",
-        "protocol",
+        ("addr", InternetAddress),
         "incarnation"
     ]
+
+    def __init__(self, node, node_addr, incarnation):
+        super(AliveMessage, self).__init__(node, node_addr, incarnation)
+
+    def __str__(self):
+        return "<%s %s>" % (self.__class__.__name__, self.node)
 
 
 class RefuteMessage(Message):
@@ -303,13 +316,12 @@ class RemoteNodeState(BaseMessage):
     _fields_ = [
         "node",
         ("addr", InternetAddress),
-        "protocol",
         "incarnation",
-        "status"
+        "status",
     ]
 
-    def __init__(self, node, node_addr, protocol, incarnation, status):
-        super(RemoteNodeState, self).__init__(node, node_addr, protocol, incarnation, status)
+    def __init__(self, node, node_addr, incarnation, status):
+        super(RemoteNodeState, self).__init__(node, node_addr, incarnation, status)
 
 
 class SyncMessage(Message):

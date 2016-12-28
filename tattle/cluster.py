@@ -150,7 +150,7 @@ class Cluster(object):
                                     sender=self.local_node_name,
                                     sender_addr=messages.InternetAddress(self.local_node_address,
                                                                          self.local_node_port))
-        LOG.trace("Sending ping (seq=%d) to %s", ping.seq, target_node.name)
+        LOG.debug("Sending ping (seq=%d) to %s", ping.seq, target_node.name)
         yield self._send_udp_message(target_node.address, target_node.port, ping)
 
         # send indirect ping messages
@@ -168,7 +168,7 @@ class Cluster(object):
             return n.name != target_node.name and n.name != self.local_node_name and n.status != state.NODE_STATUS_DEAD
 
         # send indirect ping to k nodes
-        for indirect_node in utilities.select_random_nodes(3, self._nodes, _filter_nodes):
+        for indirect_node in utilities.select_random_nodes(self.config.indirect_probes, self._nodes, _filter_nodes):
             LOG.debug("Probing node %s indirectly via %s", target_node.name, indirect_node.name)
 
             # send ping request  message
@@ -179,7 +179,7 @@ class Cluster(object):
                                                    sender=self.local_node_name,
                                                    sender_addr=messages.InternetAddress(self.local_node_address,
                                                                                         self.local_node_port))
-            LOG.trace("Sending indirect-ping (seq=%d) to %s", ping_req.seq, indirect_node)
+            LOG.debug("Sending indirect-ping (seq=%d) to %s", ping_req.seq, indirect_node.name)
             yield self._send_udp_message(indirect_node.address, indirect_node.port, ping_req)
 
     @property
@@ -286,8 +286,7 @@ class Cluster(object):
 
         new_state = state.NodeState(remote_state.node,
                                     remote_state.addr.address,
-                                    remote_state.addr.port,
-                                    remote_state.protocol)
+                                    remote_state.addr.port)
         new_state.incarnation = remote_state.incarnation
         new_state.status = remote_state.status
         yield self._nodes.merge(new_state)
@@ -300,7 +299,6 @@ class Cluster(object):
         for node in self._nodes:
             local_state.append(messages.RemoteNodeState(node=node.name,
                                                         node_addr=messages.InternetAddress(node.address, node.port),
-                                                        protocol=node.protocol,
                                                         incarnation=node.incarnation,
                                                         status=node.status))
 
@@ -376,6 +374,7 @@ class Cluster(object):
         """
         Read a message from a stream asynchronously
         :type stream: tornado.iostream.BaseIOStream
+        :return: buffer read or None
         :rtype: bytes
         """
         buf = bytes()
@@ -390,6 +389,8 @@ class Cluster(object):
         """
         Read a message from a stream synchronously
         :type stream: io.BufferedReader
+        :return: buffer read or None
+        :rtype: bytes
         """
         buf = bytes()
         buf += stream.read(messages.HEADER_LENGTH)
@@ -430,7 +431,7 @@ class Cluster(object):
         buf += self._encode_message(msg)
 
         # max_messages = len(self._nodes)
-        max_transmits = utilities.calculate_transmit_limit(len(self._nodes), 2)
+        max_transmits = utilities.calculate_transmit_limit(len(self._nodes), self.config.retransmit_multiplier)
         max_bytes = 1024 - len(buf)
 
         # gather gossip messages (already encoded)
@@ -439,7 +440,7 @@ class Cluster(object):
             LOG.trace("Gossip message max-transmits: %d", max_transmits)
 
         for g in gossip:
-            LOG.trace("Piggy-backing message %s to %s:%d", self._decode_message(g), sender_host, sender_port)
+            LOG.debug("Piggy-backing message %s to %s:%d", self._decode_message(g), sender_host, sender_port)
             buf += g
 
         # send message
@@ -563,9 +564,8 @@ class Cluster(object):
         LOG.trace("Handling ALIVE message: node=%s", message.node)
 
         new_state = state.NodeState(message.node,
-                                    message.address,
-                                    message.port,
-                                    message.protocol)
+                                    message.addr.address,
+                                    message.addr.port)
 
         new_state.incarnation = message.incarnation
 
@@ -580,34 +580,40 @@ class Cluster(object):
         LOG.trace("Handling DEAD message: node=%s", message.node)
 
     @gen.coroutine
-    def _handle_ping_message(self, message, client_addr):
-        LOG.trace("Handling PING message: target=%s", message.node)
-
-        # get address and port of sender
-        if message.sender_addr is not None:
-            sender_host = message.sender_addr.address
-            sender_port = message.sender_addr.port
-        else:
-            sender_host, sender_port = client_addr
+    def _handle_ping_message(self, msg, client_addr):
+        """
+        Handle a PingRequestMessage
+        :type msg: messages.PingMessage
+        :return None
+        """
+        LOG.trace("Handling PING message: target=%s", msg.node)
 
         # ensure target node is local node
-        if message.node != self.local_node_name:
-            LOG.warn("Received ping message %d from %s:%d for non-local node.", message.seq,
-                     sender_host,
-                     sender_port)
+        if msg.node != self.local_node_name:
+            LOG.warn("Received ping message %d from %s for non-local node.", msg.seq, msg.sender_addr)
             return
 
         # send ack message
-        ack = messages.AckMessage(message.seq, sender=self.local_node_name)
-        LOG.debug("Sending ack (%d) to %s:%d", message.seq, *client_addr)
-
-        yield self._send_udp_message(sender_host, sender_port, ack)
+        ack = messages.AckMessage(msg.seq, sender=self.local_node_name)
+        LOG.debug("Sending ACK (%d) to %s", msg.seq, msg.sender_addr)
+        yield self._send_udp_message(msg.sender_addr.address, msg.sender_addr.port, ack)
 
     @gen.coroutine
-    def _handle_ping_request_message(self, message, client_addr):
-        LOG.trace("Handling PING-REQ message: target=%s", message.node)
+    def _handle_ping_request_message(self, msg, client_addr):
+        """
+        Handle a PingRequestMessage
+        :type msg: messages.PingRequestMessage
+        :return None
+        """
+        LOG.trace("Handling PING-REQ message: target=%s", msg.node)
+
+        ping = messages.PingMessage(msg.seq,
+                                    target=msg.node,
+                                    sender=msg.sender,
+                                    sender_addr=msg.sender_addr)
+        LOG.debug("Sending PING (%d) to %s", msg.seq, msg.node_addr)
+        yield self._send_udp_message(msg.node_addr.address, msg.node_addr.port, ping)
 
     @gen.coroutine
     def _handle_ack_message(self, message, client_addr):
         LOG.trace("Handling ACK message: sender=%s", message.sender)
-
