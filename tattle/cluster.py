@@ -51,6 +51,9 @@ class Cluster(object):
         # init probe
         self._init_probe()
 
+        # init sync
+        self._init_sync()
+
     def _init_listener_udp(self):
         udp_listener = network.UDPListener()
         udp_listener.listen(self.config.bind_port, self.config.bind_address)
@@ -87,6 +90,10 @@ class Cluster(object):
         self._probe_index = 0
         self._probe_status = dict()
 
+    def _init_sync(self):
+        self._sync_schedule = ioloop.PeriodicCallback(self._do_sync,
+                                                      self.config.sync_interval)
+
     def _do_probe(self):
         """
         Handle the probe_schedule periodic callback
@@ -120,17 +127,43 @@ class Cluster(object):
 
             break
 
-        if node is not None:
+        if node is None:
+            return
 
-            def _handle_future(f):
-                error = f.exception()
-                if error:
-                    LOG.error("Error running probe", exc_info=f.exc_info())
+        LOG.debug("Probing node: %s", node)
 
-            try:
-                self._ioloop.add_future(self._probe_node(node), _handle_future)
-            except Exception:
-                LOG.exception("Error running probe")
+        def _handle_future(f):
+            error = f.exception()
+            if error:
+                LOG.error("Error running probe", exc_info=f.exc_info())
+
+        try:
+            self._ioloop.add_future(self._probe_node(node), _handle_future)
+        except Exception:
+            LOG.exception("Error running probe")
+
+    def _do_sync(self):
+        """
+        Handle the sync_schedule periodic callback
+        """
+        def _find_nodes(n):
+            return n.name != self.local_node_name and n.status != state.NODE_STATUS_DEAD
+
+        sync_node = next(iter(utilities.select_random_nodes(self.config.sync_nodes, self._nodes, _find_nodes)), None)
+        if sync_node is None:
+            return
+
+        LOG.debug("Syncing node: %s", sync_node)
+
+        def _handle_future(f):
+            error = f.exception()
+            if error:
+                LOG.error("Error running sync", exc_info=f.exc_info())
+
+        try:
+            self._ioloop.add_future(self._sync_node(sync_node), _handle_future)
+        except Exception:
+            LOG.exception("Error running sync")
 
     @gen.coroutine
     def _probe_node(self, target_node):
@@ -142,15 +175,13 @@ class Cluster(object):
         if target_node.name == self.local_node_name:
             return
 
-        LOG.debug("Probing node %s", target_node.name)
-
         # send ping message
         ping = messages.PingMessage(self._ping_seq.increment(),
                                     target=target_node.name,
                                     sender=self.local_node_name,
                                     sender_addr=messages.InternetAddress(self.local_node_address,
                                                                          self.local_node_port))
-        LOG.debug("Sending ping (seq=%d) to %s", ping.seq, target_node.name)
+        LOG.debug("Sending PING (seq=%d) to %s", ping.seq, target_node.name)
         yield self._send_udp_message(target_node.address, target_node.port, ping)
 
         # send indirect ping messages
@@ -164,12 +195,12 @@ class Cluster(object):
         :type target_node: state.NodeState
         """
 
-        def _filter_nodes(n):
+        def _find_nodes(n):
             return n.name != target_node.name and n.name != self.local_node_name and n.status != state.NODE_STATUS_DEAD
 
         # send indirect ping to k nodes
-        for indirect_node in utilities.select_random_nodes(self.config.indirect_probes, self._nodes, _filter_nodes):
-            LOG.debug("Probing node %s indirectly via %s", target_node.name, indirect_node.name)
+        for indirect_node in utilities.select_random_nodes(self.config.probe_indirect_nodes, self._nodes, _find_nodes):
+            LOG.debug("Probing node: %s indirectly via %s", target_node.name, indirect_node.name)
 
             # send ping request  message
             ping_req = messages.PingRequestMessage(self._ping_seq.increment(),
@@ -179,7 +210,7 @@ class Cluster(object):
                                                    sender=self.local_node_name,
                                                    sender_addr=messages.InternetAddress(self.local_node_address,
                                                                                         self.local_node_port))
-            LOG.debug("Sending indirect-ping (seq=%d) to %s", ping_req.seq, indirect_node.name)
+            LOG.debug("Sending PING-REQ (seq=%d) to %s", ping_req.seq, indirect_node.name)
             yield self._send_udp_message(indirect_node.address, indirect_node.port, ping_req)
 
     @property
@@ -223,6 +254,9 @@ class Cluster(object):
         # start probe
         self._probe_schedule.start()
 
+        # start sync
+        self._sync_schedule.start()
+
         LOG.info("Node started")
 
     @gen.coroutine
@@ -231,6 +265,7 @@ class Cluster(object):
         Shutdown this node. This will cause this node to appear dead to other nodes.
         """
         self._probe_schedule.stop()
+        self._sync_schedule.stop()
 
         self._tcp_listener.stop()
 
@@ -251,7 +286,7 @@ class Cluster(object):
         LOG.trace("Attempting to join %d nodes", len(sync_nodes))
 
         # sync nodes
-        results = yield [self._sync_node(node_addr) for node_addr in sync_nodes]
+        results = yield [self._sync_node(*node_addr) for node_addr in sync_nodes]
         successful_nodes, failed_nodes = utilities.partition(lambda s: s is not None, results)
         LOG.debug("Successfully synced %d nodes (%d failed)", len(successful_nodes), len(failed_nodes))
 
@@ -308,16 +343,16 @@ class Cluster(object):
         yield stream.write(self._encode_message(messages.SyncMessage(remote_state=local_state)))
 
     @gen.coroutine
-    def _sync_node(self, node_addr):
+    def _sync_node(self, node_address, node_port):
         connection = None
         try:
 
             # connect to node
-            LOG.debug("Connecting to node %s:%d", *node_addr)
+            LOG.debug("Connecting to node %s:%d", node_address, node_port)
             try:
-                connection = yield network.TCPClient().connect(*node_addr)
-            except Exception as ex:
-                LOG.error("Error connecting to node %s: %s", node_addr, ex)
+                connection = yield network.TCPClient().connect(node_address, node_port)
+            except Exception:
+                LOG.execption("Error connecting to node %s", node_address, node_port)
                 return
 
             # send local state
@@ -345,7 +380,7 @@ class Cluster(object):
         finally:
             connection.close()
 
-        raise gen.Return(node_addr)
+        raise gen.Return(True)
 
     @gen.coroutine
     def _resolve_node_address(self, node_addr):

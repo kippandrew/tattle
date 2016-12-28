@@ -16,8 +16,9 @@ class Configuration(object):
         self.api_port = None
         self.probe_interval = None
         self.probe_timeout = None
-        self.indirect_probes = None
+        self.probe_indirect_nodes = 3
         self.sync_interval = None
+        self.sync_nodes = 1
         self.retransmit_multiplier = None
         self.suspicion_multiplier = None
 
@@ -33,7 +34,8 @@ class DefaultConfiguration(Configuration):
         self.retransmit_multiplier = 3
         self.probe_interval = 100
         self.probe_timeout = 200
-        self.indirect_probes = 1
+        self.probe_indirect_nodes = 1
+        self.sync_interval = 10000
 
         if self.node_name is None:
             self.node_name = _default_node_name()
