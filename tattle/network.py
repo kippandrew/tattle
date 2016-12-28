@@ -288,6 +288,16 @@ class UDPListener(object):
         """
         self._connection.bind(address, port)
 
+    def sendto(self, data, address, port):
+        """
+        Send data
+        :param data:
+        :param address:
+        :param port:
+        :return:
+        """
+        return self._connection.sendto(data, address, port)
+
     def start(self, data_callback):
         """
         Start the listener

@@ -10,6 +10,7 @@ import six
 HEADER_LENGTH = 9  # 4 for length, 1 for flags, 4 crc
 HEADER_FORMAT = '!IBL'
 
+
 class MessageError(Exception):
     pass
 
@@ -40,8 +41,9 @@ class BaseMessage(object):
         for i, a in enumerate(args):
             key, cls = fields[i]
             if cls is not None:
-                if not issubclass(a.__class__, cls):
-                    raise TypeError("Field must be of type: %s" % cls.__name__)
+                # if field has a type defined it must of that type or None
+                if a is not None and not issubclass(a.__class__, cls):
+                    raise TypeError("Field must be of type: %s (is %s)" % (cls.__name__, a.__class__.__name__))
             self.__setattr__(key, a)
 
         # assign values from kwargs
@@ -52,8 +54,9 @@ class BaseMessage(object):
                 raise KeyError("Invalid field: %s" % k)
             key, cls = fields[i]
             if cls is not None:
-                if not issubclass(a.__class__, cls):
-                    raise TypeError("Field must be of type: %s" % cls.__name__)
+                # if field has a type defined it must of that type or None
+                if a is not None and not issubclass(a.__class__, cls):
+                    raise TypeError("Field must be of type: %s (is %s)" % (cls.__name__, a.__class__.__name__))
             self.__setattr__(k, a)
 
     def __repr__(self):
@@ -101,36 +104,40 @@ class Message(BaseMessage):
 class MessageDecoder(object):
     @classmethod
     def _deserialize_internal(cls, data):
-        # get class
-        klass = getattr(sys.modules[__name__], data.pop(0))
+        # get message type
+        message_type_name = data.pop(0)
+        if message_type_name is None:
+            return None
+        message_type = getattr(sys.modules[__name__], message_type_name)
 
-        # get args
-        args = data
+        message_args = []
 
-        # get a list of fields
-        fields = klass.get_fields()
-
-        # deserialize any arguments first
-        for field_name, field_type in fields:
+        # deserialize all message fields
+        message_fields = message_type.get_fields()
+        for i in range(len(message_fields)):
+            field_name, field_type = message_fields[i]
             if field_type is not None:
-                args.insert(0, cls._deserialize_internal(data))
 
-        args = []
-        for _ in range(len(fields)):
-            attr = data.pop(0)
-            if isinstance(attr, six.string_types) or isinstance(attr, six.binary_type):
-                args.append(attr)
-            elif isinstance(attr, collections.Sequence):
-                args.insert(0, [cls._deserialize_internal(i) for i in attr])
-            elif isinstance(attr, collections.Mapping):
-                args.insert(0, {k: cls._deserialize_internal(v) for k, v in six.iteritems(attr)})
+                # deserialize the field unless its None
+                attr = data[0]
+                if attr is None:
+                    message_args.append(data.pop(0))
+                else:
+                    message_args.append(cls._deserialize_internal(data))
+
             else:
-                args.append(attr)
+                attr = data.pop(0)
+                if isinstance(attr, six.string_types) or isinstance(attr, six.binary_type):
+                    message_args.append(attr)
+                elif isinstance(attr, collections.Sequence):
+                    message_args.append([cls._deserialize_internal(i) for i in attr])
+                else:
+                    message_args.append(attr)
 
         # shenanigans to initialize Message without calling constructor
-        obj = klass.__new__(klass, *args)
-        BaseMessage.__init__(obj, *args)
-        return obj
+        message = message_type.__new__(message_type, *message_args)
+        BaseMessage.__init__(message, *message_args)
+        return message
 
     @classmethod
     def _deserialize(cls, raw):
@@ -161,7 +168,8 @@ class MessageEncoder(object):
         fields = msg.__class__.get_fields()
         for field_name, field_type in fields:
             attr = getattr(msg, field_name)
-            if field_type is not None:
+            if field_type is not None and attr is not None:
+                # if attr has a field type defined deserialize that field
                 data.extend(cls._serialize_internal(attr))
             else:
                 if isinstance(attr, six.string_types) or isinstance(attr, six.binary_type):
@@ -190,49 +198,75 @@ class MessageEncoder(object):
         return header + raw
 
 
+class InternetAddress(BaseMessage):
+    _fields_ = [
+        "addr_v4",
+        "addr_v6",
+        "port"
+    ]
+
+    def __init__(self, addr_v4, port, addr_v6=None):
+        super(InternetAddress, self).__init__(addr_v4, addr_v6, port)
+
+    @property
+    def address(self):
+        if self.addr_v6 is not None:
+            return self.addr_v6
+        else:
+            return self.addr_v4
+
+
 class PingMessage(Message):
     _fields_ = [
         "seq",
         "node",
+        "sender",
+        ("sender_addr", InternetAddress),
     ]
 
-    def __init__(self, seq, node):
+    def __init__(self, seq, target, sender=None, sender_addr=None):
         """
         Create new instance of the PingMessage class
         :param seq: sequence number
-        :param node: target node
-        :return None
+        :param target: target node name
+        :param sender: sender node name
+        :param sender_addr: sender node address
         """
-        super(PingMessage, self).__init__(seq, node)
+        super(PingMessage, self).__init__(seq, target, sender, sender_addr)
 
 
 class PingRequestMessage(Message):
     _fields_ = [
         "seq",
         "node",
-        "from"
+        ("node_addr", InternetAddress),
+        "sender",
+        ("sender_addr", InternetAddress),
     ]
 
-    def __init__(self, seq, target_node, from_node):
+    def __init__(self, seq, target, target_addr, sender=None, sender_addr=None):
         """
         Create new instance of the PingRequestMessage class
         :param seq: sequence number
-        :param target_node:
-        :param from_node:
-        :return None
+        :param target: target node name
+        :param target_addr: target node address
+        :param sender: sender node name
+        :param sender_addr: sender node address
         """
-        super(PingRequestMessage, self).__init__(seq, target_node, from_node)
+        super(PingRequestMessage, self).__init__(seq, target, target_addr, sender, sender_addr)
 
 
 class AckMessage(Message):
     _fields_ = [
-        "seq"
+        "seq",
+        "sender"
     ]
 
 
 class NackMessage(Message):
     _fields_ = [
-        "seq"
+        "seq",
+        "sender"
     ]
 
 
@@ -240,7 +274,6 @@ class SuspectMessage(Message):
     _fields_ = [
         "node",  # node name
         "incarnation",
-        "from"
     ]
 
 
@@ -269,12 +302,14 @@ class RefuteMessage(Message):
 class RemoteNodeState(BaseMessage):
     _fields_ = [
         "node",
-        "address",
-        "port",
+        ("addr", InternetAddress),
         "protocol",
         "incarnation",
         "status"
     ]
+
+    def __init__(self, node, node_addr, protocol, incarnation, status):
+        super(RemoteNodeState, self).__init__(node, node_addr, protocol, incarnation, status)
 
 
 class SyncMessage(Message):
@@ -282,5 +317,5 @@ class SyncMessage(Message):
         "nodes"
     ]
 
-    def __init__(self, nodes):
-        super(SyncMessage, self).__init__(nodes)
+    def __init__(self, remote_state):
+        super(SyncMessage, self).__init__(remote_state)

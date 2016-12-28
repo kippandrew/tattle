@@ -24,10 +24,6 @@ class MessageEqualityTestCase(unittest.TestCase):
         self.assertEqual(len({msg1, msg2, msg3}), 2)
 
 
-class MessageEncoderTestCase(unittest.TestCase):
-    pass
-
-
 class MessageDecoderTestCase(unittest.TestCase):
     def test_encode(self):
         orig = messages.PingMessage(1, "test")
@@ -35,7 +31,13 @@ class MessageDecoderTestCase(unittest.TestCase):
         self.assertEqual(orig, messages.MessageDecoder.decode(buf))
 
     def test_encode_list(self):
-        orig = messages.SyncMessage(nodes=[messages.RemoteNodeState('test-node', '127.0.0.1', 12345)])
+        orig = messages.SyncMessage(remote_state=[messages.RemoteNodeState('test-node', '127.0.0.1', 12345)])
         buf = messages.MessageEncoder.encode(orig)
         new = messages.MessageDecoder.decode(buf)
         self.assertEqual(orig, new)
+
+    def test_encode_complex(self):
+
+        orig = messages.PingRequestMessage(1, "node", messages.InternetAddress('host', 123), "sender")
+        buf = messages.MessageEncoder.encode(orig)
+        self.assertEqual(orig, messages.MessageDecoder.decode(buf))
