@@ -266,10 +266,9 @@ class Cluster(object):
         """
         self._probe_schedule.stop()
         self._sync_schedule.stop()
-
         self._tcp_listener.stop()
-
         self._udp_listener.stop()
+
         LOG.info("Shut down")
 
     @gen.coroutine
@@ -337,13 +336,19 @@ class Cluster(object):
                                                         incarnation=node.incarnation,
                                                         status=node.status))
 
-        LOG.debug("Sending local state %s", local_state)
+        LOG.trace("Sending local state %s", local_state)
 
         # send message
         yield stream.write(self._encode_message(messages.SyncMessage(remote_state=local_state)))
 
     @gen.coroutine
     def _sync_node(self, node_address, node_port):
+        """
+        Sync with remote node
+        :param node_address:
+        :param node_port:
+        :return:
+        """
         connection = None
         try:
 

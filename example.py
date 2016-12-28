@@ -103,7 +103,8 @@ def run():
                                                                                           node3,
                                                                                           node4,
                                                                                           node5,
-                                                                                          node6]))
+                                                                                          node6,
+                                                                                          node7]))
     except gen.TimeoutError:
         ioloop.IOLoop.current().stop()
 
