@@ -1,17 +1,18 @@
+import asyncio
 import socket
 
-from tornado import gen
-from tornado import testing
+import asynctest
 
+import asyncstream
+import asyncstream.factory
 from tattle import network
 
 
-class AbstractNetworkTestCase(testing.AsyncTestCase):
+class AbstractNetworkTestCase(asynctest.TestCase):
     # noinspection PyAttributeOutsideInit
     def setUp(self):
         # setup super class
         super(AbstractNetworkTestCase, self).setUp()
-
         self._next_port = 55555
 
     def _get_available_local_address(self):
@@ -24,41 +25,49 @@ class AbstractNetworkTestCase(testing.AsyncTestCase):
         self.addCleanup(lambda: peer.close())  # automatically close the socket after tests run
         return peer
 
-    def _create_udp_listener(self, listen_address, listen_port):
-        listener = network.UDPListener()
-        listener.listen(listen_port, listen_address)
+    def _create_udp_listener(self, listen_address, listen_port, callback):
+        listener = network.UDPListener(listen_address, listen_port, callback)
         self.addCleanup(lambda: listener.stop())  # automatically close the socket after tests run
         return listener
 
-    def _create_tcp_listener(self, listen_address, listen_port):
-        listener = network.TCPListener()
-        listener.listen(listen_port, listen_address)
+    def _create_tcp_listener(self, listen_address, listen_port, callback):
+        listener = network.TCPListener(listen_address, listen_port, callback)
         self.addCleanup(lambda: listener.stop())  # automatically close the socket after tests run
         return listener
 
 
 class UDPConnectionTestCase(AbstractNetworkTestCase):
-    @testing.gen_test(timeout=1)
-    def test_send_and_recv(self):
-        # create a connection to peer2 bound to peer1
+    async def test_send_and_recv(self):
+        # create a connection
         peer1_addr = self._get_available_local_address()
         peer1 = self._create_udp_connection()
-        peer1.bind(*peer1_addr)
+        peer1.bind(peer1_addr)
 
-        # create a connection to peer1 bound to peer2
+        # create a connection
         peer2_addr = self._get_available_local_address()
         peer2 = self._create_udp_connection()
-        peer2.bind(*peer2_addr)
+        peer2.bind(peer2_addr)
 
         # send message from peer1 to peer2
-        peer1.sendto(b'Foo Bar', *peer2_addr)
-        data, addr = yield peer2.read_bytes(1024)
+        await peer1.connect(peer2_addr)
+        await peer1.send(b'Foo Bar')
+        data = await peer2.recv(1024)
         self.assertEqual(data, b'Foo Bar')
-        self.assertEqual(addr, peer1_addr)
+
+    async def test_sendto_and_recvform(self):
+        # create a connection
+        peer1_addr = self._get_available_local_address()
+        peer1 = self._create_udp_connection()
+        peer1.bind(peer1_addr)
+
+        # create a connection
+        peer2_addr = self._get_available_local_address()
+        peer2 = self._create_udp_connection()
+        peer2.bind(peer2_addr)
 
         # send message from peer2 to peer1
-        peer2.sendto(b'Ding Dong', *peer1_addr)
-        data, addr = yield peer1.read_bytes(1024)
+        await peer2.sendto(b'Ding Dong', peer1_addr)
+        data, addr = await peer1.recvfrom(1024)
         self.assertEqual(data, b'Ding Dong')
         self.assertEqual(addr, peer2_addr)
 
@@ -94,65 +103,55 @@ class AbstractListenerTestCase(AbstractNetworkTestCase):
             self.fail("Message was received: %s from %s" % (msg, addr))
 
 
-class UDPClientTestCase(AbstractNetworkTestCase):
-    @testing.gen_test
-    def test_send_udp(self):
-        # create UDPConnection
-        peer1_addr = self._get_available_local_address()
-        peer1 = self._create_udp_connection()
-        peer1.bind(*peer1_addr)
-
-        # create UDPClient
-        conn = network.UDPClient().connect(*peer1_addr)
-        conn.send(b'foo bar')
-        received_data, addr = yield peer1.read_bytes(1024)
-
-        self.assertEqual(b'foo bar', received_data)
-
-
 class UDPListenerTestCase(AbstractListenerTestCase):
     def _handle_udp_data(self, data, addr):
         self.received.append((data, addr))
 
-    @testing.gen_test
-    def test_receive_udp_message(self):
-        # configure a UDPListener
+    async def test_receive_udp_message(self):
+        # create a UDPListener
         listener_addr = self._get_available_local_address()
-        listener = self._create_udp_listener(*listener_addr)
-        listener.start(self._handle_udp_data)
+        listener = self._create_udp_listener(*listener_addr, self._handle_udp_data)
+        await listener.start()
 
         # create a UDP connection
         peer1 = self._create_udp_connection()
-        peer1_addr = (b'localhost', 12345)
-        peer1.bind(*peer1_addr)
 
         # send message to listener
-        peer1.sendto(b'ding dong', *listener_addr)
+        await peer1.sendto(b'foo', listener_addr)
+        await peer1.sendto(b'bar', listener_addr)
 
-        yield gen.sleep(0.1)
+        # create a UDP connection
+        peer2 = self._create_udp_connection()
 
-        self.assertMessageReceived(b'ding dong', peer1_addr)
+        # send message to listener
+        await peer2.connect(listener_addr)
+        await peer2.send(b'baz')
+
+        await asyncio.sleep(.2)
+
+        self.assertMessageReceived(b'foo')
+        self.assertMessageReceived(b'bar')
+        self.assertMessageReceived(b'baz')
 
 
 class TCPListenerTestCase(AbstractListenerTestCase):
-    @gen.coroutine
-    def _handle_tcp_stream(self, stream, addr):
-        data = yield stream.read_bytes(11)
+    async def _handle_tcp_stream(self, stream, addr):
+        data = await stream.read_async(255)
         self.received.append((data, addr))
 
-    @testing.gen_test
-    def test_receive_tcp_message(self):
+    async def test_receive_tcp_message(self):
         # configure a TCPListener
         listener_addr = self._get_available_local_address()
-        listener = self._create_tcp_listener(*listener_addr)
-        listener.start(self._handle_tcp_stream)
+        listener = self._create_tcp_listener(*listener_addr, self._handle_tcp_stream)
+        await listener.start()
 
         # create a TCP connection
-        stream = yield network.TCPClient().connect(*listener_addr)
+        stream = await asyncstream.factory.Client().connect(*listener_addr)
+        writer = asyncstream.StreamWriter(stream)
 
         # send message to listener
-        yield stream.write(b'hello world')
+        await writer.write(b'hello world')
 
-        yield gen.sleep(0.1)
+        await asyncio.sleep(0.1)
 
         self.assertMessageReceived(b'hello world')

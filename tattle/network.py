@@ -1,15 +1,10 @@
-import errno
+import asyncio
 import socket
-import sys
-import time
+import asyncstream
 
-from tornado import concurrent
 from tornado import gen
-from tornado import ioloop
-from tornado import stack_context
-from tornado import tcpclient
-from tornado import tcpserver
 
+import asyncstream.factory
 from tattle import logging
 
 __all__ = [
@@ -21,78 +16,77 @@ __all__ = [
 
 LOG = logging.get_logger(__name__)
 
-# These errnos indicate that a non-blocking operation must be retried
-# at a later time.  On most platforms they're the same value, but on
-# some they differ.
-_ERRNO_WOULDBLOCK = (errno.EWOULDBLOCK, errno.EAGAIN)
-if hasattr(errno, "WSAEWOULDBLOCK"):
-    _ERRNO_WOULDBLOCK += (errno.WSAEWOULDBLOCK,)
+
+class AbstractListener:
+    def __init__(self, listen_address, listen_port, callback, loop=None):
+        self._listen_address = listen_address
+        self._listen_port = listen_port
+        self._callback = callback
+        self._loop = loop or asyncio.get_event_loop()
+
+    def _run_callback(self, *args, **kwargs):
+        try:
+            if self._callback is not None:
+                res = self._callback(*args, **kwargs)
+                if asyncio.coroutines.iscoroutine(res):
+                    self._loop.create_task(res)
+        except:
+            LOG.exception("Error running callback")
+
+    @property
+    def local_address(self):
+        raise NotImplementedError
+
+    @property
+    def local_port(self):
+        raise NotImplementedError
+
+    async def start(self):
+        raise NotImplementedError
+
+    async def stop(self):
+        raise NotImplementedError
 
 
-class TCPClient(tcpclient.TCPClient):
-    """
-    TCPClient is a factory for creating TCP connections (IOStream)
-    """
-    pass
-
-
-class TCPListener(tcpserver.TCPServer):
+class TCPListener(AbstractListener):
     """
     The TCPListener listens for messages over TCP
     """
 
-    def __init__(self):
-        super(TCPListener, self).__init__()
-        self._stream_callback = None
+    def __init__(self, listen_address, listen_port, callback, loop=None):
+        super().__init__(listen_address, listen_port, callback, loop)
+        self._server = asyncstream.factory.Server(self._handle_connection, loop=self._loop)
 
     @property
     def local_address(self):
-        for s in self._sockets.values():
+        for s in self._server.sockets:
             if s.family == socket.AF_INET:
                 return s.getsockname()[0]
 
     @property
     def local_port(self):
-        for s in self._sockets.values():
+        for s in self._server.sockets:
             if s.family == socket.AF_INET:
                 return s.getsockname()[1]
 
-    # noinspection PyMethodOverriding
-    def start(self, message_callback):
-        super(TCPListener, self).start()
-        self._stream_callback = stack_context.wrap(message_callback)
+    async def start(self):
+        await self._server.listen(self._listen_address, self._listen_port)
 
-    def stop(self):
-        super(TCPListener, self).stop()
-        self._stream_callback = None
+    async def stop(self):
+        self._server.close()
 
-    @gen.coroutine
-    def handle_stream(self, stream, addr):
-        LOG.debug("Handing incoming TCP connection from: %s", addr)
+    async def _handle_connection(self, stream, addr):
+        LOG.trace("Handing incoming TCP connection from: %s", addr)
 
-        # run callback
-        try:
-            if self._stream_callback is not None:
-                yield self._stream_callback(stream, addr)
-        except:
-            LOG.exception("Error running callback")
+        self._run_callback(stream, addr)
 
-        LOG.debug("Finished handling TCP connection from: %s", addr)
+        LOG.trace("Finished handling TCP connection from: %s", addr)
 
 
-class UDPConnection(object):
-    """
-    The UDPConnection class is low-level interface for sending and receiving data asynchronously via UDP.
-    """
-
-    def __init__(self):
+class UDPConnection:
+    def __init__(self, event_loop=None):
+        self._event_loop = event_loop or asyncio.get_event_loop()
         self._socket = self._create_socket()
-        self._state = None
-        self._read_future = None
-        self._write_future = None
-        self._read_bytes = None
-        self._read_timeout = None
-        self._ioloop = ioloop.IOLoop.current()
 
     def _create_socket(self):
         udpsock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -107,30 +101,27 @@ class UDPConnection(object):
     def local_port(self):
         return self._socket.getsockname()[1]
 
-    def connect(self, address, port):
+    def connect(self, addr):
         """
         Connect to a given address (for use with send)
-        :param address:
-        :param port:
+        :param addr:
         :return:
         """
-        self._socket.connect((address, port))
+        return self._event_loop.sock_connect(self._socket, addr)
 
-    def bind(self, address, port):
+    def bind(self, addr):
         """
         Bind the connection to given port and address
-        :param address:
-        :param port:
+        :param addr:
         :return:
         """
-        self._socket.bind((address, port if port is not None else 0))
+        self._socket.bind(addr)
 
     def close(self):
         """
         Close connection
         :return: None
         """
-        self._ioloop.remove_handler(self._socket.fileno())
         self._socket.close()
         self._socket = None
 
@@ -138,138 +129,101 @@ class UDPConnection(object):
         """
         Send data
         :param data:
-        :return:
+        :return: None on success, otherwise exception is raised
         """
-        return self._socket.send(data)
+        return self._event_loop.sock_sendall(self._socket, data)
 
-    def sendto(self, data, address, port):
+    def sendto(self, data, addr):
         """
         Send data
+        :param addr:
         :param data:
-        :param address:
-        :param port:
-        :return:
+        :return: None on success, otherwise exception is raised
         """
-        return self._socket.sendto(data, (address, port))
+        fut = self._event_loop.create_future()
+        if data:
+            self._sendto(data, addr, fut, False)
+        else:
+            fut.set_result(None)
+        return fut
 
-    def read_bytes(self, max_bytes, timeout=5):
+    def _sendto(self, data, addr, fut, registered):
+        fd = self._socket.fileno()
+
+        # Remove the writer if already registered
+        if registered:
+            self._event_loop.remove_writer(fd)
+
+        if fut.cancelled():
+            return
+
+        try:
+            n = self._socket.sendto(data, addr)
+        except (BlockingIOError, InterruptedError):
+            # if we're going to block, we'll add a writer (see below)
+            n = 0
+        except Exception as exc:
+            fut.set_exception(exc)
+            return
+
+        # get data left to be send
+        if n == len(data):
+            fut.set_result(None)
+        else:
+            if n:
+                data = data[n:]
+            self._event_loop.add_writer(fd, self._sendto, data, addr, fut, True)
+
+    def recv(self, read_bytes):
         """
         Receive data
-        :param max_bytes:
-        :param timeout
-        :return: Future
+        :param read_bytes:
+        :return: Bytes read
         """
-        future = self._set_read_future()
-        self._read_bytes = max_bytes
-        if timeout > 0:
-            self._read_timeout = self._ioloop.add_timeout(time.time() + timeout, self._handle_read_timeout)
-        self._add_io_state(self._ioloop.READ)
-        return future
+        return self._event_loop.sock_recv(self._socket, read_bytes)
 
-    def _add_io_state(self, state):
-        if self._state is None:
-            self._state = ioloop.IOLoop.ERROR | state
-            self._ioloop.add_handler(self._socket.fileno(), self._handle_events, self._state)
-        elif not self._state & state:
-            self._state = self._state | state
-            self._ioloop.update_handler(self._socket.fileno(), self._state)
+    def recvfrom(self, read_bytes):
+        """
+        Receive data
+        :param read_bytes:
+        :return: Bytes read
+        """
+        fut = self._event_loop.create_future()
+        self._recvfrom(read_bytes, fut, False)
+        return fut
 
-    def _set_read_future(self):
-        assert self._read_future is None, "Already reading"
-        self._read_future = concurrent.TracebackFuture()
-        return self._read_future
+    def _recvfrom(self, read_bytes, fut, registered):
+        fd = self._socket.fileno()
 
-    def _resolve_read_future(self, result, exception=None, exc_info=None):
-        assert self._read_future is not None, "Not reading"
-        future = self._read_future
-        self._read_future = None
-        if exception is not None:
-            future.set_exception(exception)
-        elif exc_info is not None:
-            future.set_exc_info(exc_info)
-        else:
-            future.set_result(result)
+        # Remove the reader if already registered
+        if registered:
+            self._event_loop.remove_reader(fd)
 
-    def _handle_read_timeout(self):
-        """
-        _handle_read_timeout is called when a timeout occurs reading data from the socket
-        """
-        if self._read_future is not None:
-            self._resolve_read_future(None, exception=ioloop.TimeoutError())
+        if fut.cancelled():
+            return
 
-    def _handle_read_error(self):
-        """
-        _handle_read_error is called when an error occurs reading data from the socket
-        """
-        if self._read_future is not None:
-            self._resolve_read_future(None, exc_info=sys.exc_info())
-
-    def _handle_read(self):
-        """
-        _handle_read is called when the ioloop reports data is available on the socket
-        """
         try:
-            # clear timeout
-            if self._read_timeout:
-                self._ioloop.remove_timeout(self._read_timeout)
-
-            if self._read_future:
-                try:
-                    data, addr = self._socket.recvfrom(self._read_bytes)
-                except socket.error as e:
-                    if e.args[0] in _ERRNO_WOULDBLOCK:
-                        return
-                    else:
-                        self._handle_read_error()
-                        return
-                if not data:
-                    self.close()
-                    return
-
-                # run the read callback
-                self._resolve_read_future((data, addr))
-
-        except Exception:
-            LOG.exception("Error handling read")
-
-    # noinspection PyUnusedLocal
-    def _handle_events(self, fd, events):
-        """
-        _handle_events is called when io state changes on the socket
-        """
-        if events & self._ioloop.READ:
-            self._handle_read()
-        if events & self._ioloop.ERROR:
-            LOG.error('%s event error' % self)
+            data, addr = self._socket.recvfrom(read_bytes)
+        except (BlockingIOError, InterruptedError):
+            # if we're going to block, add a reader
+            self._event_loop.add_reader(fd, self._recvfrom, read_bytes, fut, True)
+        except Exception as exc:
+            fut.set_exception(exc)
+        else:
+            fut.set_result((data, addr))
 
 
-class UDPClient(object):
-    """
-    The UDPClient is a factory for creating UDP connections
-    """
-
-    def connect(self, address, port):
-        """
-        Create a UDPConnection
-        :param address:
-        :param port:
-        :return: Future
-        """
-        conn = UDPConnection()
-        conn.connect(address, port)
-        return conn
-
-
-class UDPListener(object):
+class UDPListener(AbstractListener):
     """
     The UDPListener listens for messages via UDP
     """
 
-    def __init__(self, buffer_size=1024):
-        self._buffer_size = buffer_size
-        self._connection = UDPConnection()
-        self._ioloop = ioloop.IOLoop.current()
-        self._data_callback = None
+    def __init__(self, listen_address, listen_port, callback, loop=None, read_size=1024):
+        super().__init__(listen_address, listen_port, callback, loop)
+        self._read_size = read_size
+        self._connection = UDPConnection(self._loop)
+        self._connection.bind((listen_address, listen_port))
+        self._task = None
 
     @property
     def local_address(self):
@@ -279,15 +233,6 @@ class UDPListener(object):
     def local_port(self):
         return self._connection.local_port
 
-    def listen(self, port, address=""):
-        """
-        Listen for messages on a given port and address
-        :param port:
-        :param address:
-        :return:
-        """
-        self._connection.bind(address, port)
-
     def sendto(self, data, address, port):
         """
         Send data
@@ -296,25 +241,27 @@ class UDPListener(object):
         :param port:
         :return:
         """
-        return self._connection.sendto(data, address, port)
+        return self._connection.sendto(data, (address, port))
 
-    def start(self, data_callback):
+    async def start(self):
         """
         Start the listener
         :return:
         """
-        self._data_callback = stack_context.wrap(data_callback)
+        self._read_data()
 
-        # wait for data
-        self._ioloop.add_future(self._connection.read_bytes(self._buffer_size, timeout=0), self._handle_data)
-
-    def stop(self):
+    async def stop(self):
         """
         Stop the listener
         :return:
         """
-        self._data_callback = None
+        self._task.cancel()
         self._connection.close()
+
+    def _read_data(self):
+        # wait for data
+        self._task = asyncio.ensure_future(self._connection.recvfrom(self._read_size), loop=self._loop)
+        self._task.add_done_callback(self._handle_data)
 
     def _handle_data(self, future):
         """
@@ -331,14 +278,32 @@ class UDPListener(object):
             # get future result
             data, addr = future.result()
 
-            try:
-                if self._data_callback is not None:
-                    self._data_callback(data, addr)
-            except:
-                LOG.exception("Error running callback")
+            # run callback
+            self._run_callback(data, addr)
 
         except:
             LOG.exception("Error handling data")
 
-        # wait for data
-        self._ioloop.add_future(self._connection.read_bytes(self._buffer_size, timeout=0), self._handle_data)
+        self._read_data()
+
+
+async def resolve_address(self, node_addr):
+    LOG.debug("Resolving node address %s", node_addr)
+
+    # if node is a tuple, assume its (addr, port)
+    if isinstance(node_addr, tuple):
+        raise gen.Return(node_addr)
+
+    # if node_addr is a string assume its host or host:port
+    elif isinstance(node_addr, str):
+        # get port from node
+        if ':' in node_addr:
+            host, _, port = node_addr.split(':')
+        else:
+            # use default port
+            host, port = node_addr, self.config.node_port
+
+        result = await self._resolver.resolve(host, port)
+        raise gen.Return(result)
+    else:
+        raise ValueError(node_addr, "Unknown node address format: %s", node_addr)

@@ -1,9 +1,9 @@
 #!/usr/bin/env python2.7
 import argparse
+import asyncio
 
-from tornado import gen
 from tornado import httpserver
-from tornado import ioloop
+from tornado.platform.asyncio import AsyncIOMainLoop
 
 import tattle
 import tattle.logging
@@ -34,6 +34,8 @@ def _parse_arguments():
 
 
 if __name__ == '__main__':
+    AsyncIOMainLoop().install()
+
     # parse arguments
     args = _parse_arguments()
 
@@ -58,11 +60,10 @@ if __name__ == '__main__':
             config.bind_port = bind_port
 
     # init logging
-    logger = tattle.logging.init_logger()
+    logger = tattle.logging.init_logger(tattle.logging.TRACE)
 
     # initialize cluster
     cluster = tattle.Cluster(config)
-    cluster.start()
 
     # initialize API
     api = tattle.api.APIServer(cluster)
@@ -72,5 +73,13 @@ if __name__ == '__main__':
     http.listen(config.api_port, address=config.api_address)
     LOG.info("API server listening on %s:%s", config.api_address, config.api_port)
 
-    # lets go!
-    ioloop.IOLoop.instance().start()
+    # from tornado.platform.asyncio import AsyncIOMainLoop
+
+    # start cluster
+    asyncio.ensure_future(cluster.start())
+    asyncio.get_event_loop().run_forever()
+
+    # # lets go!
+    # ioloop.IOLoop.configure('tornado.platform.asyncio.AsyncIOLoop')
+    # ioloop.IOLoop.current().add_callback(cluster.start)
+    # ioloop.IOLoop.current().start()

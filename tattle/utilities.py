@@ -3,15 +3,13 @@ import itertools
 import math
 import random
 
-import six
-
 
 class Sequence(object):
     def __init__(self, start=1, step=1):
         self._seq = itertools.count(start, step)
 
     def increment(self):
-        return six.next(self._seq)
+        return next(self._seq)
 
 
 def partition(fun, iterable):

@@ -5,7 +5,7 @@ import struct
 import sys
 
 import msgpack
-import six
+# import six
 
 HEADER_LENGTH = 9  # 4 for length, 1 for flags, 4 crc
 HEADER_FORMAT = '!IBL'
@@ -127,7 +127,7 @@ class MessageDecoder(object):
 
             else:
                 attr = data.pop(0)
-                if isinstance(attr, six.string_types) or isinstance(attr, six.binary_type):
+                if isinstance(attr, str) or isinstance(attr, bytes):
                     message_args.append(attr)
                 elif isinstance(attr, collections.Sequence):
                     message_args.append([cls._deserialize_internal(i) for i in attr])
@@ -172,12 +172,12 @@ class MessageEncoder(object):
                 # if attr has a field type defined deserialize that field
                 data.extend(cls._serialize_internal(attr))
             else:
-                if isinstance(attr, six.string_types) or isinstance(attr, six.binary_type):
+                if isinstance(attr, str) or isinstance(attr, bytes):
                     data.append(attr)
                 elif isinstance(attr, collections.Sequence):
                     data.append([cls._serialize_internal(i) for i in attr])
                 elif isinstance(attr, collections.Mapping):
-                    data.append({k: cls._serialize_internal(v) for k, v in six.iteritems(attr)})
+                    data.append({k: cls._serialize_internal(v) for k, v in attr.items()})
                 else:
                     data.append(attr)
         return data

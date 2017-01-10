@@ -1,8 +1,7 @@
 import collections
 import time
 
-from tornado import gen
-from tornado import locks
+import asyncio
 
 from tattle import logging
 from tattle import messages
@@ -52,7 +51,7 @@ class NodeManager(collections.Sequence):
     def __init__(self, queue):
         self._nodes = list()
         self._nodes_map = dict()
-        self._nodes_lock = locks.Lock()
+        self._nodes_lock = asyncio.Lock()
         self._local_node_name = None
         self._local_node_seq = utilities.Sequence()
         self._queue = queue
@@ -70,8 +69,7 @@ class NodeManager(collections.Sequence):
     def local_node(self):
         return self._nodes_map[self._local_node_name]
 
-    @gen.coroutine
-    def set_local_node(self, local_node_name, local_node_address, local_node_port, local_node_protocol=0):
+    async def set_local_node(self, local_node_name, local_node_address, local_node_port, local_node_protocol=0):
         """
         Set local node as alive
         """
@@ -86,24 +84,24 @@ class NodeManager(collections.Sequence):
         new_state.incarnation = self._local_node_seq.increment()
 
         # signal node is alive
-        yield self.on_node_alive(new_state, bootstrap=True)
+        await self.on_node_alive(new_state, bootstrap=True)
 
-    @gen.coroutine
-    def merge(self, new_state):
+    async def merge(self, new_state):
         if new_state.status == NODE_STATUS_ALIVE:
-            yield self.on_node_alive(new_state)
-        elif new_state.status == NODE_STATUS_DEAD or new_state.status == NODE_STATUS_SUSPECT:
+            await self.on_node_alive(new_state)
+        elif new_state.status == NODE_STATUS_SUSPECT:
+            await self.on_node_suspect(new_state)
+        elif new_state.status == NODE_STATUS_DEAD:
             # rather then declaring a node a dead immediately, mark it as suspect
-            yield self.on_node_suspect(new_state)
+            await self.on_node_suspect(new_state)
         else:
             LOG.warn("Unknown node status: %s", new_state.status)
             return
 
-    @gen.coroutine
-    def on_node_alive(self, new_state, bootstrap=False):
+    async def on_node_alive(self, new_state, bootstrap=False):
 
         # acquire node lock
-        with (yield self._nodes_lock.acquire()):
+        with (await self._nodes_lock):
 
             # It is possible that during a leave(), there is already an aliveMsg
             # in-queue to be processed but blocked by the locks above. If we let
@@ -185,14 +183,8 @@ class NodeManager(collections.Sequence):
 
                 LOG.info("Node alive: %s (incarnation %d)", new_state.name, new_state.incarnation)
 
-    @gen.coroutine
-    def on_node_dead(self, node):
+    async def on_node_dead(self, node):
+        pass
 
-        with (yield self._nodes_lock.acquire()):
-            pass
-
-    @gen.coroutine
-    def on_node_suspect(self, node):
-
-        with (yield self._nodes_lock.acquire()):
-            pass
+    async def on_node_suspect(self, node):
+        pass
