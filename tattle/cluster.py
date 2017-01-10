@@ -2,10 +2,10 @@ import io
 import struct
 import asyncio
 
-# from tornado import ioloop
+import asyncstream
+
 from tornado import iostream
 
-import asyncstream
 from tattle import logging
 from tattle import messages
 from tattle import network
@@ -275,10 +275,10 @@ class Cluster(object):
             await self._sync_node(*node_addr)
 
 
-        # # sync nodes
-        # done, pending = await asyncio.wait([self._sync_node(*node_addr) for node_addr in nodes], loop=self._loop)
-        # successful_nodes, failed_nodes = utilities.partition(lambda s: s is not None, done)
-        # LOG.debug("Successfully synced %d nodes (%d failed)", len(successful_nodes), len(failed_nodes))
+            # # sync nodes
+            # done, pending = await asyncio.wait([self._sync_node(*node_addr) for node_addr in nodes], loop=self._loop)
+            # successful_nodes, failed_nodes = utilities.partition(lambda s: s is not None, done)
+            # LOG.debug("Successfully synced %d nodes (%d failed)", len(successful_nodes), len(failed_nodes))
 
     async def leave(self):
         """

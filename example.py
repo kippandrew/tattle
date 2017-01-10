@@ -5,7 +5,9 @@ import functools
 # from tornado import concurrent
 # from tornado import gen
 # from tornado import ioloop
+from tornado import ioloop
 from tornado import stack_context
+from tornado.platform.asyncio import AsyncIOMainLoop
 
 import tattle
 import tattle.logging
@@ -131,8 +133,12 @@ logger = tattle.logging.init_logger(tattle.logging.TRACE)
 # run cluster
 # run()
 
+# asyncio.ensure_future(run())
+# asyncio.get_event_loop().run_forever()
+AsyncIOMainLoop().install()
+
 asyncio.ensure_future(run())
-asyncio.get_event_loop().run_forever()
+ioloop.IOLoop.current().start()
 
 # ioloop.IOLoop.configure('tornado.platform.asyncio.AsyncIOLoop')
 # ioloop.IOLoop.instance().start()

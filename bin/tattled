@@ -2,6 +2,7 @@
 import argparse
 import asyncio
 
+from tornado import ioloop
 from tornado import httpserver
 from tornado.platform.asyncio import AsyncIOMainLoop
 
@@ -76,10 +77,11 @@ if __name__ == '__main__':
     # from tornado.platform.asyncio import AsyncIOMainLoop
 
     # start cluster
-    asyncio.ensure_future(cluster.start())
-    asyncio.get_event_loop().run_forever()
+    # asyncio.ensure_future(cluster.start())
+    # asyncio.get_event_loop().run_forever()
 
     # # lets go!
     # ioloop.IOLoop.configure('tornado.platform.asyncio.AsyncIOLoop')
-    # ioloop.IOLoop.current().add_callback(cluster.start)
     # ioloop.IOLoop.current().start()
+    asyncio.ensure_future(cluster.start())
+    ioloop.IOLoop.current().start()
