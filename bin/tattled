@@ -1,4 +1,4 @@
-#!/usr/bin/env python2.7
+#!/usr/bin/env python
 import argparse
 import asyncio
 
@@ -16,8 +16,8 @@ LOG = tattle.logging.get_logger('tattled')
 
 def _parse_address(address):
     if ':' in address:
-        host, _, port = address.split(':')
-        return host, port
+        host, _, port = address.partition(':')
+        return host, int(port)
     return address, None
 
 
@@ -61,7 +61,7 @@ if __name__ == '__main__':
             config.bind_port = bind_port
 
     # init logging
-    logger = tattle.logging.init_logger(tattle.logging.TRACE)
+    logger = tattle.logging.init_logger(tattle.logging.DEBUG)
 
     # initialize cluster
     cluster = tattle.Cluster(config)
