@@ -30,4 +30,6 @@ class ScheduledCallback(object):
         while True:
             await asyncio.sleep(self.time)
             LOG.trace("Running scheduled callback: %s", self.func)
-            await self.func()
+            res = self.func()
+            if asyncio.coroutines.iscoroutine(res):
+                await res

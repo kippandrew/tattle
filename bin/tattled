@@ -74,6 +74,7 @@ if __name__ == '__main__':
 
     # from tornado.platform.asyncio import AsyncIOMainLoop
 
+    # TODO: handle SIGINT
     # start cluster
     # asyncio.ensure_future(cluster.start())
     # asyncio.get_event_loop().run_forever()
@@ -81,5 +82,6 @@ if __name__ == '__main__':
     # # lets go!
     # ioloop.IOLoop.configure('tornado.platform.asyncio.AsyncIOLoop')
     # ioloop.IOLoop.current().start()
+
     asyncio.ensure_future(cluster.start())
     ioloop.IOLoop.current().start()

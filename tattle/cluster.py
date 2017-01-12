@@ -147,8 +147,8 @@ class Cluster(object):
         """
         Shutdown this node. This will cause this node to appear dead to other nodes.
         """
-        self._probe_schedule.stop()
-        self._sync_schedule.stop()
+        await self._probe_schedule.stop()
+        await self._sync_schedule.stop()
         self._tcp_listener.stop()
         self._udp_listener.stop()
 

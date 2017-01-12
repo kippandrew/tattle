@@ -1,6 +1,9 @@
+import sys
 import asyncio
+import datetime
 import functools
 
+from tornado import gen
 from tornado import ioloop
 from tornado import stack_context
 from tornado.platform.asyncio import AsyncIOMainLoop
@@ -52,27 +55,27 @@ async def start_node():
     return node
 
 
-# def wait_until_converged(nodes):
-#     future = concurrent.TracebackFuture()
-#
-#     def _check_converged():
-#         if any(len(n.members) < len(nodes) for n in nodes):
-#             ioloop.IOLoop.current().add_timeout(datetime.timedelta(milliseconds=200), _check_converged)
-#             return
-#         future.set_result(True)
-#
-#     _check_converged()
-#     return future
+def wait_until_converged(nodes):
+    future = asyncio.Future()
+
+    def _check_converged():
+        if any(len(n.members) < len(nodes) for n in nodes):
+            ioloop.IOLoop.current().add_timeout(datetime.timedelta(milliseconds=200), _check_converged)
+            return
+        future.set_result(True)
+
+    _check_converged()
+    return future
 
 
 async def run():
     node1 = await start_node()
     node2 = await start_node()
     node3 = await start_node()
-    node4 = await start_node()
-    node5 = await start_node()
-    node6 = await start_node()
-    node7 = await start_node()
+    # node4 = await start_node()
+    # node5 = await start_node()
+    # node6 = await start_node()
+    # node7 = await start_node()
 
     await run_with_node_context(node1, join_node, node1, [node2])
     await asyncio.sleep(1)
@@ -82,45 +85,31 @@ async def run():
 
     # await run_with_node_context(node4, join_node, node4, [node1])
     # await run_with_node_context(node5, join_node, node5, [node4])
-    # await gen.sleep(1)
+    # await asyncio.sleep(1)
     #
     # await run_with_node_context(node6, join_node, node6, [node5])
-    # await gen.sleep(1)
+    # await asyncio.sleep(1)
     #
     # await run_with_node_context(node7, join_node, node7, [node1])
-    # await gen.sleep(1)
+    # await asyncio.sleep(1)
 
-    # timeout = 30
-    # try:
-    #     await gen.with_timeout(datetime.timedelta(seconds=timeout), wait_until_converged([node1,
-    #                                                                                       node2,
-    #                                                                                       node3,
-    #                                                                                       node4,
-    #                                                                                       node5,
-    #                                                                                       node6,
-    #                                                                                       node7]))
-    # except gen.TimeoutError:
-    #     ioloop.IOLoop.current().stop()
-    #
-    #     print("Failed to converge after {} seconds".format(timeout), file=sys.stderr)
-    #     print(node1.config.node_name, node1.members, file=sys.stderr)
-    #     print(node2.config.node_name, node2.members, file=sys.stderr)
-    #     print(node3.config.node_name, node3.members, file=sys.stderr)
-    #     print(node4.config.node_name, node4.members, file=sys.stderr)
-    #     print(node5.config.node_name, node5.members, file=sys.stderr)
-    #     print(node6.config.node_name, node6.members, file=sys.stderr)
-    #     print(node7.config.node_name, node7.members, file=sys.stderr)
-    #
-    # else:
-    #     ioloop.IOLoop.current().stop()
-    #
-    #     print(node1.config.node_name, node1.members)
-    #     print(node2.config.node_name, node2.members)
-    #     print(node3.config.node_name, node3.members)
-    #     print(node4.config.node_name, node4.members)
-    #     print(node5.config.node_name, node5.members)
-    #     print(node6.config.node_name, node6.members)
-    #     print(node7.config.node_name, node7.members)
+    timeout = 30
+    try:
+        await asyncio.wait_for(wait_until_converged([node1, node2, node3]), timeout)
+    except gen.TimeoutError:
+        ioloop.IOLoop.current().stop()
+
+        print("Failed to converge after {} seconds".format(timeout), file=sys.stderr)
+        print(node1.config.node_name, node1.members, file=sys.stderr)
+        print(node2.config.node_name, node2.members, file=sys.stderr)
+        print(node3.config.node_name, node3.members, file=sys.stderr)
+
+    else:
+        ioloop.IOLoop.current().stop()
+
+        print(node1.config.node_name, node1.members)
+        print(node2.config.node_name, node2.members)
+        print(node3.config.node_name, node3.members)
 
 
 # init logging

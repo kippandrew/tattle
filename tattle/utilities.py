@@ -3,6 +3,8 @@ import itertools
 import math
 import random
 
+import asyncio
+
 
 class Sequence(object):
     def __init__(self, start=1, step=1):
