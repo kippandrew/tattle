@@ -2,7 +2,6 @@ import collections
 import traceback
 
 from tornado import web
-from tornado import gen
 from tornado import httputil
 
 from tattle import logging
@@ -76,6 +75,13 @@ class APIRequestHandler(web.RequestHandler):
         else:
             self._json = dict()
 
+    def write_error(self, status_code, **kwargs):
+        exc_info = kwargs.pop('exc_info', None)
+        if exc_info is not None:
+            return self._write_exception_json(status_code, exc_info, **kwargs)
+        else:
+            return self._write_error_json(status_code, **kwargs)
+
     def _write_error_json(self, status_code, **kwargs):
         error = dict()
         error.update(**kwargs)
@@ -110,13 +116,6 @@ class APIRequestHandler(web.RequestHandler):
         # include any kwargs that may of come through
         error.update(kwargs)
         self.finish(error)
-
-    def write_error(self, status_code, **kwargs):
-        exc_info = kwargs.pop('exc_info', None)
-        if exc_info is not None:
-            return self._write_exception_json(status_code, exc_info, **kwargs)
-        else:
-            return self._write_error_json(status_code, **kwargs)
 
 
 # noinspection PyAbstractClass

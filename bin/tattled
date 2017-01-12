@@ -8,8 +8,6 @@ from tornado.platform.asyncio import AsyncIOMainLoop
 
 import tattle
 import tattle.logging
-import tattle.config
-import tattle.api
 
 LOG = tattle.logging.get_logger('tattled')
 
@@ -41,7 +39,7 @@ if __name__ == '__main__':
     args = _parse_arguments()
 
     # init config
-    config = tattle.config.init_config()
+    config = tattle.init_config()
 
     if args.name is not None:
         config.node_name = args.name
@@ -67,7 +65,7 @@ if __name__ == '__main__':
     cluster = tattle.Cluster(config)
 
     # initialize API
-    api = tattle.api.APIServer(cluster)
+    api = tattle.APIServer(cluster)
 
     # start http server
     http = httpserver.HTTPServer(api)
