@@ -1,6 +1,9 @@
 import io
 import struct
 import asyncio
+import concurrent.futures
+
+import functools
 
 import asyncstream
 
@@ -29,6 +32,7 @@ class Cluster(object):
         :type config: tattle.config.Configuration
         """
         self.config = config
+
         self._loop = loop or asyncio.get_event_loop()
 
         # self._ioloop = ioloop.IOLoop.current()
@@ -71,12 +75,10 @@ class Cluster(object):
         return tcp_listener
 
     def _init_queue(self):
-        q = queue.MessageQueue()
-        return q
+        return queue.MessageQueue()
 
     def _init_state(self):
-        nodes = state.NodeManager(self._queue)
-        return nodes
+        return state.NodeManager(self._queue)
 
     def _init_probe(self):
         self._probe_schedule = schedule.ScheduledCallback(self._do_probe, self.config.probe_interval)
@@ -85,115 +87,6 @@ class Cluster(object):
 
     def _init_sync(self):
         self._sync_schedule = schedule.ScheduledCallback(self._do_sync, self.config.sync_interval)
-
-    async def _do_probe(self):
-        """
-        Handle the probe_schedule periodic callback
-        """
-        node = None
-        checked = 0
-
-        # only check as many nodes as exist
-        while checked < len(self._nodes):
-
-            # handle wrap around
-            if self._probe_index >= len(self._nodes):
-                self._probe_index = 0
-                continue
-
-            node = self._nodes[self._probe_index]
-
-            if node == self._nodes.local_node:
-                skip = True  # skip local node
-            elif node.status == state.NODE_STATUS_DEAD:
-                skip = True  # skip dead nodes
-            else:
-                skip = False
-
-            self._probe_index += 1
-
-            # keep checking
-            if skip:
-                checked += 1
-                node = None
-                continue
-
-            break
-
-        if node is None:
-            return
-
-        LOG.debug("Probing node: %s", node)
-
-        try:
-            await self._probe_node(node)
-        except Exception:
-            LOG.exception("Error running probe")
-
-    async def _do_sync(self):
-        """
-        Handle the sync_schedule periodic callback
-        """
-
-        def _find_nodes(n):
-            return n.name != self.local_node_name and n.status != state.NODE_STATUS_DEAD
-
-        sync_node = next(iter(utilities.select_random_nodes(self.config.sync_nodes, self._nodes, _find_nodes)), None)
-        if sync_node is None:
-            return
-
-        LOG.debug("Syncing node: %s", sync_node)
-
-        try:
-            await self._sync_node(sync_node.address, sync_node.port)
-        except Exception:
-            LOG.exception("Error running sync")
-
-    async def _probe_node(self, target_node):
-        """
-        Probe a node
-        :param target_node: node to probe
-        :type target_node: state.NodeState
-        """
-        if target_node.name == self.local_node_name:
-            return
-
-        # send ping message
-        ping = messages.PingMessage(self._ping_seq.increment(),
-                                    target=target_node.name,
-                                    sender=self.local_node_name,
-                                    sender_addr=messages.InternetAddress(self.local_node_address,
-                                                                         self.local_node_port))
-        LOG.debug("Sending PING (seq=%d) to %s", ping.seq, target_node.name)
-        await self._send_udp_message(target_node.address, target_node.port, ping)
-
-        # send indirect ping messages
-        await self._probe_node_indirect(target_node)
-
-    async def _probe_node_indirect(self, target_node):
-        """
-        Probe a node indirectly
-        :param target_node: node to probe
-        :type target_node: state.NodeState
-        """
-
-        def _find_nodes(n):
-            return n.name != target_node.name and n.name != self.local_node_name and n.status != state.NODE_STATUS_DEAD
-
-        # send indirect ping to k nodes
-        for indirect_node in utilities.select_random_nodes(self.config.probe_indirect_nodes, self._nodes, _find_nodes):
-            LOG.debug("Probing node: %s indirectly via %s", target_node.name, indirect_node.name)
-
-            # send ping request  message
-            ping_req = messages.PingRequestMessage(self._ping_seq.increment(),
-                                                   target=target_node.name,
-                                                   target_addr=messages.InternetAddress(target_node.address,
-                                                                                        target_node.port),
-                                                   sender=self.local_node_name,
-                                                   sender_addr=messages.InternetAddress(self.local_node_address,
-                                                                                        self.local_node_port))
-            LOG.debug("Sending PING-REQ (seq=%d) to %s", ping_req.seq, indirect_node.name)
-            await self._send_udp_message(indirect_node.address, indirect_node.port, ping_req)
 
     @property
     def local_node_address(self):
@@ -301,6 +194,155 @@ class Cluster(object):
     @property
     def members(self):
         return sorted(self._nodes, key=lambda n: n.name)
+
+    async def _do_probe(self):
+        """
+        Handle the probe_schedule periodic callback
+        """
+        node = None
+        checked = 0
+
+        # only check as many nodes as exist
+        while checked < len(self._nodes):
+
+            # handle wrap around
+            if self._probe_index >= len(self._nodes):
+                self._probe_index = 0
+                continue
+
+            node = self._nodes[self._probe_index]
+
+            if node == self._nodes.local_node:
+                skip = True  # skip local node
+            elif node.status == state.NODE_STATUS_DEAD:
+                skip = True  # skip dead nodes
+            else:
+                skip = False
+
+            self._probe_index += 1
+
+            # keep checking
+            if skip:
+                checked += 1
+                node = None
+                continue
+
+            break
+
+        if node is None:
+            return
+
+        LOG.debug("Probing node: %s", node)
+
+        try:
+            await self._probe_node(node)
+        except Exception:
+            LOG.exception("Error running probe")
+
+    async def _do_sync(self):
+        """
+        Handle the sync_schedule periodic callback
+        """
+
+        def _find_nodes(n):
+            return n.name != self.local_node_name and n.status != state.NODE_STATUS_DEAD
+
+        sync_node = next(iter(utilities.select_random_nodes(self.config.sync_nodes, self._nodes, _find_nodes)), None)
+        if sync_node is None:
+            return
+
+        LOG.debug("Syncing node: %s", sync_node)
+
+        try:
+            await self._sync_node(sync_node.address, sync_node.port)
+        except Exception:
+            LOG.exception("Error running sync")
+
+    async def _probe_node(self, target_node):
+        """
+        Probe a node
+        :param target_node: node to probe
+        :type target_node: state.NodeState
+        """
+        if target_node.name == self.local_node_name:
+            return
+
+        # get a sequence number for the ping
+        next_seq = self._ping_seq.increment()
+
+        # send ping message
+        ping = messages.PingMessage(next_seq,
+                                    target=target_node.name,
+                                    sender=self.local_node_name,
+                                    sender_addr=messages.InternetAddress(self.local_node_address,
+                                                                         self.local_node_port))
+        LOG.debug("Sending PING (seq=%d) to %s", ping.seq, target_node.name)
+        await self._send_udp_message(target_node.address, target_node.port, ping)
+
+        # wait for ping probe result
+        self._loop.create_task(self._wait_for_probe(target_node, next_seq, self.config.probe_timeout))
+
+        # send indirect ping messages
+        await self._probe_node_indirect(target_node)
+
+    async def _wait_for_probe(self, target_node, seq, timeout):
+
+        def _handle_probe_future(f):
+            self._handle_probe_result(target_node, seq)
+
+        # create a Future
+        future = self._loop.create_future()
+
+        # call handler when future is done
+        future.add_done_callback(_handle_probe_future)
+
+        # save future to be resolved when an ack is received
+        self._probe_status[seq] = future
+
+        try:
+            # wait for timeout, then raise TimeoutError
+            await asyncio.wait_for(future, timeout=timeout / 1000)
+        except asyncio.TimeoutError:
+            self._handle_probe_timeout(target_node, seq)
+
+    def _handle_probe_result(self, target_node, seq):
+        LOG.debug("Probe result for %d %s", seq, target_node)
+
+        del self._probe_status[seq]
+
+    def _handle_probe_timeout(self, target_node, seq):
+        LOG.debug("Probe timeout for %d %s", seq, target_node)
+
+    async def _probe_node_indirect(self, target_node):
+        """
+        Probe a node indirectly
+        :param target_node: node to probe
+        :type target_node: state.NodeState
+        """
+
+        def _find_nodes(n):
+            return n.name != target_node.name and n.name != self.local_node_name and n.status != state.NODE_STATUS_DEAD
+
+        # send indirect ping to k nodes
+        for indirect_node in utilities.select_random_nodes(self.config.probe_indirect_nodes, self._nodes, _find_nodes):
+            LOG.debug("Probing node: %s indirectly via %s", target_node.name, indirect_node.name)
+
+            # get a sequence number for the ping
+            next_seq = self._ping_seq.increment()
+
+            # send ping request  message
+            ping_req = messages.PingRequestMessage(next_seq,
+                                                   target=target_node.name,
+                                                   target_addr=messages.InternetAddress(target_node.address,
+                                                                                        target_node.port),
+                                                   sender=self.local_node_name,
+                                                   sender_addr=messages.InternetAddress(self.local_node_address,
+                                                                                        self.local_node_port))
+
+            self._loop.create_task(self._wait_for_probe(target_node, next_seq, self.config.probe_timeout))
+
+            LOG.debug("Sending PING-REQ (seq=%d) to %s", ping_req.seq, indirect_node.name)
+            await self._send_udp_message(indirect_node.address, indirect_node.port, ping_req)
 
     async def _merge_remote_state(self, remote_state):
         LOG.trace("Merging remote state: %s", remote_state)
@@ -474,11 +516,11 @@ class Cluster(object):
             LOG.exception("Error handling TCP stream")
             return
 
-    # noinspection PyTypeChecker
     async def _handle_tcp_message(self, message, client, stream):
         LOG.trace("Handling TCP message from %s", client)
         try:
             if isinstance(message, messages.SyncMessage):
+                # noinspection PyTypeChecker
                 await self._handle_sync_message(message, stream)
             else:
                 LOG.warn("Unknown message type: %r", message.__class__)
@@ -531,21 +573,26 @@ class Cluster(object):
             LOG.exception("Error handling UDP data")
             return
 
-    # noinspection PyTypeChecker
     async def _handle_udp_message(self, message, client_addr):
         LOG.trace("Handling UDP message from %s:%d", *client_addr)
         try:
             if isinstance(message, messages.AliveMessage):
+                # noinspection PyTypeChecker
                 await self._handle_alive_message(message, client_addr)
             elif isinstance(message, messages.SuspectMessage):
+                # noinspection PyTypeChecker
                 await self._handle_suspect_message(message, client_addr)
             elif isinstance(message, messages.DeadMessage):
+                # noinspection PyTypeChecker
                 await self._handle_dead_message(message, client_addr)
             elif isinstance(message, messages.PingMessage):
+                # noinspection PyTypeChecker
                 await self._handle_ping_message(message, client_addr)
             elif isinstance(message, messages.PingRequestMessage):
+                # noinspection PyTypeChecker
                 await self._handle_ping_request_message(message, client_addr)
             elif isinstance(message, messages.AckMessage):
+                # noinspection PyTypeChecker
                 await self._handle_ack_message(message, client_addr)
             else:
                 LOG.warn("Unknown message type: %r", message.__class__)
@@ -606,3 +653,12 @@ class Cluster(object):
 
     async def _handle_ack_message(self, message, client_addr):
         LOG.trace("Handling ACK message: sender=%s", message.sender)
+
+        # resolve pending probe
+        ack_seq = message.seq
+        if ack_seq in self._probe_status:
+
+            self._probe_status[ack_seq].set_result(True)
+
+        else:
+            LOG.warn("Received ACK for unknown probe: %d from %s", message.seq, message.sender)
