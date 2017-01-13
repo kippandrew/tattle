@@ -7,8 +7,6 @@ import time
 
 import asyncstream
 
-from tornado import iostream
-
 from tattle import logging
 from tattle import messages
 from tattle import network
@@ -537,8 +535,6 @@ class Cluster(object):
 
                 try:
                     raw = await self._read_tcp_message(stream)
-                except iostream.StreamClosedError:
-                    break
                 except IOError:
                     LOG.exception("Error reading stream")
                     break

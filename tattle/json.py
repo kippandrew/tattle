@@ -3,8 +3,6 @@ from __future__ import absolute_import
 import json
 import datetime
 
-from tornado import escape
-
 
 def _custom_json_handler(obj):
     if isinstance(obj, (datetime.datetime, datetime.time)):
@@ -19,4 +17,4 @@ def to_json(obj, fp=None):
 
 
 def from_json(s):
-    return json.loads(escape.to_basestring(s))
+    return json.loads(s)

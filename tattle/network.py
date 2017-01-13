@@ -1,10 +1,8 @@
 import asyncio
 import socket
 import asyncstream
-
-from tornado import gen
-
 import asyncstream.factory
+
 from tattle import logging
 
 __all__ = [
@@ -286,24 +284,23 @@ class UDPListener(AbstractListener):
 
         self._read_data()
 
-
-async def resolve_address(self, node_addr):
-    LOG.debug("Resolving node address %s", node_addr)
-
-    # if node is a tuple, assume its (addr, port)
-    if isinstance(node_addr, tuple):
-        raise gen.Return(node_addr)
-
-    # if node_addr is a string assume its host or host:port
-    elif isinstance(node_addr, str):
-        # get port from node
-        if ':' in node_addr:
-            host, _, port = node_addr.split(':')
-        else:
-            # use default port
-            host, port = node_addr, self.config.node_port
-
-        result = await self._resolver.resolve(host, port)
-        raise gen.Return(result)
-    else:
-        raise ValueError(node_addr, "Unknown node address format: %s", node_addr)
+# async def resolve_address(self, node_addr):
+#     LOG.debug("Resolving node address %s", node_addr)
+#
+#     # if node is a tuple, assume its (addr, port)
+#     if isinstance(node_addr, tuple):
+#         raise gen.Return(node_addr)
+#
+#     # if node_addr is a string assume its host or host:port
+#     elif isinstance(node_addr, str):
+#         # get port from node
+#         if ':' in node_addr:
+#             host, _, port = node_addr.split(':')
+#         else:
+#             # use default port
+#             host, port = node_addr, self.config.node_port
+#
+#         result = await self._resolver.resolve(host, port)
+#         raise gen.Return(result)
+#     else:
+#         raise ValueError(node_addr, "Unknown node address format: %s", node_addr)

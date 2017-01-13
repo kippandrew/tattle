@@ -3,8 +3,6 @@ import itertools
 import math
 import random
 
-import asyncio
-
 
 class Sequence(object):
     def __init__(self, start=1, step=1):
@@ -58,3 +56,19 @@ def select_random_nodes(k, nodes, predicate=None):
         selected.append(node)
 
     return selected
+
+
+def parse_address(address):
+    if ':' in address:
+        host, _, port = address.partition(':')
+        return host, int(port)
+    return address, None
+
+
+def make_address(host, port, protocol=None):
+    address = host
+    if port is not None:
+        address = host + ":" + str(port)
+        if protocol is not None:
+            address = protocol.lower() + "://" + address
+    return address
