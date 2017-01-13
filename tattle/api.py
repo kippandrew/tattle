@@ -1,143 +1,138 @@
-import collections
+import asyncio
 import traceback
+import sys
 
-from tornado import web
-from tornado import httputil
+from aiohttp import web
 
 from tattle import logging
 from tattle import json
 
+__all__ = [
+    'APIServer',
+    'start_server',
+    'stop_server',
+]
+
 LOG = logging.get_logger(__name__)
+
+
+class APIError(web.HTTPError):
+    def __init__(self, status_code, message=None):
+        self.status_code = status_code
+        self.message = message
+        super(APIError, self).__init__()
+
+
+def error_middleware():
+    # noinspection PyUnusedLocal
+    @asyncio.coroutine
+    def _middleware(app, handler):
+
+        def _write_exception_json(status_code=500, exc_info=None):
+            if exc_info is None:
+                exc_info = sys.exc_info()
+            exception = exc_info[2]
+            error = {'error': "Internal Server Error"}
+            error['traceback'] = [t for t in traceback.format_exception(*exc_info)]
+            return web.Response(status=status_code,
+                                body=json.to_json(error).encode('utf-8'),
+                                content_type='application/json')
+
+        def _write_error_json(status_code, message=None):
+            return web.Response(status=status_code,
+                                body=json.to_json({'error': message}).encode('utf-8'),
+                                content_type='application/json')
+
+        @asyncio.coroutine
+        def _middleware_handler(request):
+            try:
+                response = yield from handler(request)
+                return response
+            except APIError as ex:
+                return _write_error_json(ex.status_code, ex.message or ex.reason)
+            except web.HTTPError as ex:
+                return _write_error_json(ex.status_code, ex.reason)
+            except Exception as ex:
+                return _write_exception_json()
+
+        return _middleware_handler
+
+    return _middleware
 
 
 class APIServer(web.Application):
     def __init__(self, cluster):
+        """
+        Initialize instance of the APIServer class
+        :param cluster:
+        """
+
         # initialize cluster
         self.cluster = cluster
 
-        # initialize handlers
-        handlers = [
-            (r'/cluster/join?$', JoinAPIHandler),
-            (r'/cluster/leave$', LeaveAPIHandler),
-            (r'/cluster/nodes/?$', NodeAPIHandler),
-            (r'/?.*', DefaultAPIHandler),
-        ]
-
         # initialize super class
-        super(APIServer, self).__init__(handlers)
+        super(APIServer, self).__init__(middlewares=[error_middleware()])
+
+        # initialize routes
+        self.router.add_route('*', '/cluster/join', JoinAPIHandler)
+        self.router.add_route('*', '/cluster/leave', LeaveAPIHandler)
+        self.router.add_route('*', '/cluster/members/', MemberAPIHandler)
 
         LOG.debug("Initialized APIServer")
 
 
-class APIError(web.HTTPError):
-    def __init__(self, status_code, error=None, **kwargs):
-        self.error = error
-        super(APIError, self).__init__(status_code, error, **kwargs)
-
-
-class APIRequestHandler(web.RequestHandler):
-    def initialize(self):
-        # call super class
-        super(APIRequestHandler, self).initialize()
-
-    def finalize(self):
-        # call super class
-        super(APIRequestHandler, self).prepare()
-
-    def on_finish(self):
-        super(APIRequestHandler, self).on_finish()
-        self.finalize()
-
+class APIRequestHandler(web.View):
     @property
     def cluster(self):
-        return self.application.cluster
-
-    def get_json(self, key=None, default=None):
-        if not hasattr(self, '_json'):
-            self._parse_json()
-        if key is not None:
-            return self._json.get(key, default)
-        return self._json
-
-    def _parse_json(self):
-        # parse request json
-        if 'Content-Type' in self.request.headers:
-            content_type, content_type_options = httputil._parse_header(self.request.headers['Content-Type'])
-            if content_type == 'application/json':
-                try:
-                    # parse JSON
-                    self._json = json.from_json(self.request.body)
-                except ValueError as e:
-                    LOG.warn("Unable to parse json: %s" % e)
-                    self._json = dict()
-            else:
-                self._json = dict()
-        else:
-            self._json = dict()
-
-    def write_error(self, status_code, **kwargs):
-        exc_info = kwargs.pop('exc_info', None)
-        if exc_info is not None:
-            return self._write_exception_json(status_code, exc_info, **kwargs)
-        else:
-            return self._write_error_json(status_code, **kwargs)
-
-    def _write_error_json(self, status_code, **kwargs):
-        error = dict()
-        error.update(**kwargs)
-        error['error'] = self._reason
-        self.finish(error)
-
-    def _write_exception_json(self, status_code, exc_info, **kwargs):
-        ex_type, ex, ex_traceback = exc_info
-
-        error = dict()
-        if isinstance(ex, APIError):
-
-            # get error message
-            error['error'] = (ex.error if hasattr(ex, 'error') else self._reason) or self._reason
-
-            # include kwargs if any
-            if hasattr(ex, 'kwargs'):
-                error.update(ex.kwargs)
-
-            # log error
-            LOG.error(ex)
-        else:
-            error['error'] = self._reason
-
-            # if debug is enabled, include traceback
-            if self.settings.get('debug', False):
-                error['traceback'] = [t for t in traceback.format_exception(*exc_info)]
-
-                # log exception
-                LOG.error("Unhandled exception: ", exc_info=1)
-
-        # include any kwargs that may of come through
-        error.update(kwargs)
-        self.finish(error)
+        return self.request.app.cluster
 
 
-# noinspection PyAbstractClass
-class DefaultAPIHandler(APIRequestHandler):
-    def prepare(self):
-        raise APIError(404)
-
-
-# noinspection PyAbstractClass
 class JoinAPIHandler(APIRequestHandler):
-    def post(self):
-        nodes = self.get_json('nodes', None)
-        if nodes is None or not isinstance(nodes, collections.Sequence):
-            raise APIError(400, error="A list of nodes to join must be specified.")
-
-
-# noinspection PyAbstractClass
-class LeaveAPIHandler(APIRequestHandler):
+    @asyncio.coroutine
     def post(self):
         pass
 
 
-# noinspection PyAbstractClass
-class NodeAPIHandler(APIRequestHandler):
-    pass
+class LeaveAPIHandler(APIRequestHandler):
+    @asyncio.coroutine
+    def post(self):
+        pass
+
+
+class MemberAPIHandler(APIRequestHandler):
+    @asyncio.coroutine
+    def get(self):
+        return web.json_response(dict(members=self.cluster.members))
+
+
+def start_server(app, port, host='127.0.0.1'):
+    loop = app.loop
+
+    # create handler
+    handler = app.make_handler()
+
+    # signal app startup
+    loop.run_until_complete(app.startup())
+
+    # create socket server
+    server = loop.run_until_complete(loop.create_server(handler, host, port, ssl=None, backlog=100))
+    LOG.info("Started API server on %s:%d", host, port)
+
+    return (handler, server)
+
+
+def stop_server(app, server, handler, timeout=10):
+    loop = app.loop
+
+    # close server socket
+    server.close()
+    loop.run_until_complete(server.wait_closed())
+
+    # signal app shutdown
+    loop.run_until_complete(app.shutdown())
+
+    # shutdown handler
+    loop.run_until_complete(handler.shutdown(timeout))
+
+    # signal app cleanup
+    loop.run_until_complete(app.cleanup())

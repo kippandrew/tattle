@@ -54,11 +54,8 @@ if __name__ == '__main__':
     # initialize cluster
     cluster = tattle.Cluster(config)
 
-    # initialize RPC
-    rpc = tattle.RPCServer(cluster)
-
-    # start RPC
-    asyncio.ensure_future(rpc.listen(tattle.make_address(config.rpc_address, config.rpc_port, protocol='tcp')))
+    # start API server
+    tattle.start_server(tattle.APIServer(cluster), config.api_port, config.api_address)
 
     # start cluster
     asyncio.ensure_future(cluster.start())
