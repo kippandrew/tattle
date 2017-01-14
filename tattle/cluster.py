@@ -167,7 +167,6 @@ class Cluster(object):
         for node_addr in nodes:
             await self._sync_node(*node_addr)
 
-
             # # sync nodes
             # done, pending = await asyncio.wait([self._sync_node(*node_addr) for node_addr in nodes], loop=self._loop)
             # successful_nodes, failed_nodes = utilities.partition(lambda s: s is not None, done)
@@ -262,7 +261,7 @@ class Cluster(object):
         """
         Probe a node
         :param target_node: node to probe
-        :type target_node: state.NodeState
+        :type target_node: state.Node
         """
         if target_node.name == self.local_node_name:
             return
@@ -277,7 +276,7 @@ class Cluster(object):
                                     sender_addr=messages.InternetAddress(self.local_node_address,
                                                                          self.local_node_port))
         LOG.debug("Sending PING (seq=%d) to %s", ping.seq, target_node.name)
-        await self._send_udp_message(target_node.address, target_node.port, ping)
+        await self._send_udp_message(target_node.host, target_node.port, ping)
 
         # wait for ping probe result
         self._wait_for_probe(target_node, next_seq, self._handle_probe_result)
@@ -285,8 +284,10 @@ class Cluster(object):
         # send indirect ping messages
         await self._probe_node_indirect(target_node)
 
-    def _handle_probe_result(self, node, seq):
+    async def _handle_probe_result(self, node, seq):
         LOG.debug("Successful probe for node: %s", node)
+
+        # TODO: clear suspect node
 
     def _wait_for_probe(self, node, seq, callback=None):
 
@@ -332,12 +333,16 @@ class Cluster(object):
                 end_time = time.time()
                 LOG.warn("Timeout waiting for ACK %d (elapsed time %0.2fs)", seq, end_time - start_time)
 
-                # if we get a timeout
-                self._handle_probe_timeout(node, seq)
+                # if we get a timeout, the node is suspect
+                await self._handle_probe_timeout(node, seq)
 
         self._loop.create_task(__wait_for_probe())
 
-    def _handle_probe_timeout(self, node, seq):
+    async def _handle_probe_timeout(self, node, seq):
+        """
+        Handle
+        :type node: state.Node
+        """
 
         # cancel future
         future = self._probe_status[seq]
@@ -346,13 +351,14 @@ class Cluster(object):
         # remove pending probe status
         del self._probe_status[seq]
 
-        # TODO: node is suspect
+        # node is suspect
+        await self._nodes.on_node_suspect(node.name, node.incarnation)
 
     async def _probe_node_indirect(self, target_node):
         """
         Probe a node indirectly
         :param target_node: node to probe
-        :type target_node: state.NodeState
+        :type target_node: state.Node
         """
 
         def _find_nodes(n):
@@ -371,28 +377,43 @@ class Cluster(object):
             # send ping request message
             ping_req = messages.PingRequestMessage(next_seq,
                                                    target=target_node.name,
-                                                   target_addr=messages.InternetAddress(target_node.address,
+                                                   target_addr=messages.InternetAddress(target_node.host,
                                                                                         target_node.port),
                                                    sender=self.local_node_name,
                                                    sender_addr=messages.InternetAddress(self.local_node_address,
                                                                                         self.local_node_port))
 
             LOG.debug("Sending PING-REQ (seq=%d) to %s", ping_req.seq, indirect_node.name)
-            await self._send_udp_message(indirect_node.address, indirect_node.port, ping_req)
+            await self._send_udp_message(indirect_node.host, indirect_node.port, ping_req)
 
     # wait for the probe
     def _handle_indirect_probe_result(self, target_node, seq):
         LOG.debug("Successful indirect probe for node: %s", target_node)
 
+        # TODO: clear suspect node
+
     async def _merge_remote_state(self, remote_state):
         LOG.trace("Merging remote state: %s", remote_state)
 
-        new_state = state.NodeState(remote_state.node,
-                                    remote_state.addr.address,
-                                    remote_state.addr.port)
-        new_state.incarnation = remote_state.incarnation
-        new_state.status = remote_state.status
-        await self._nodes.merge(new_state)
+        # merge Node into state
+        if remote_state.status == state.NODE_STATUS_ALIVE:
+            await self._nodes.on_node_alive(remote_state.node,
+                                            remote_state.incarnation,
+                                            remote_state.addr.address,
+                                            remote_state.addr.port)
+
+        elif remote_state.status == state.NODE_STATUS_SUSPECT:
+            await self._nodes.on_node_suspect(remote_state.node,
+                                              remote_state.incarnation)
+
+        elif remote_state.status == state.NODE_STATUS_DEAD:
+            # rather then declaring a node a dead immediately, mark it as suspect
+            await self._nodes.on_node_suspect(remote_state.node,
+                                              remote_state.incarnation)
+
+        else:
+            LOG.warn("Unknown node status: %s", remote_state.status)
+            return
 
     async def _send_local_state(self, stream):
 
@@ -400,7 +421,7 @@ class Cluster(object):
         local_state = []
         for node in self._nodes:
             local_state.append(messages.RemoteNodeState(node=node.name,
-                                                        node_addr=messages.InternetAddress(node.address, node.port),
+                                                        node_addr=messages.InternetAddress(node.host, node.port),
                                                         incarnation=node.incarnation,
                                                         status=node.status))
 
@@ -581,7 +602,7 @@ class Cluster(object):
             LOG.exception("Error sending remote state")
             return
 
-    async def _handle_udp_data(self, data, client_addr):
+    async def _handle_udp_data(self, data, client):
         try:
 
             # create a buffered reader
@@ -605,33 +626,33 @@ class Cluster(object):
                     continue
 
                 # dispatch the message
-                await self._handle_udp_message(msg, client_addr)
+                await self._handle_udp_message(msg, client)
 
         except Exception:
             LOG.exception("Error handling UDP data")
             return
 
-    async def _handle_udp_message(self, message, client_addr):
-        LOG.trace("Handling UDP message from %s:%d", *client_addr)
+    async def _handle_udp_message(self, message, client):
+        LOG.trace("Handling UDP message from %s:%d", *client)
         try:
             if isinstance(message, messages.AliveMessage):
                 # noinspection PyTypeChecker
-                await self._handle_alive_message(message, client_addr)
+                await self._handle_alive_message(message, client)
             elif isinstance(message, messages.SuspectMessage):
                 # noinspection PyTypeChecker
-                await self._handle_suspect_message(message, client_addr)
+                await self._handle_suspect_message(message, client)
             elif isinstance(message, messages.DeadMessage):
                 # noinspection PyTypeChecker
-                await self._handle_dead_message(message, client_addr)
+                await self._handle_dead_message(message, client)
             elif isinstance(message, messages.PingMessage):
                 # noinspection PyTypeChecker
-                await self._handle_ping_message(message, client_addr)
+                await self._handle_ping_message(message, client)
             elif isinstance(message, messages.PingRequestMessage):
                 # noinspection PyTypeChecker
-                await self._handle_ping_request_message(message, client_addr)
+                await self._handle_ping_request_message(message, client)
             elif isinstance(message, messages.AckMessage):
                 # noinspection PyTypeChecker
-                await self._handle_ack_message(message, client_addr)
+                await self._handle_ack_message(message, client)
             else:
                 LOG.warn("Unknown message type: %r", message.__class__)
                 return
@@ -639,24 +660,26 @@ class Cluster(object):
             LOG.exception("Error dispatching UDP message")
             return
 
-    async def _handle_alive_message(self, message, client_addr):
-        LOG.trace("Handling ALIVE message: node=%s", message.node)
+    # noinspection PyUnusedLocal
+    async def _handle_alive_message(self, msg, client):
+        LOG.trace("Handling ALIVE message: node=%s", msg.node)
 
-        new_state = state.NodeState(message.node,
-                                    message.addr.address,
-                                    message.addr.port)
+        await self._nodes.on_node_alive(msg.node, msg.incarnation, msg.addr.address, msg.addr.port)
 
-        new_state.incarnation = message.incarnation
+    # noinspection PyUnusedLocal
+    async def _handle_suspect_message(self, msg, client):
+        LOG.trace("Handling SUSPECT message: node=%s", msg.node)
 
-        await self._nodes.on_node_alive(new_state)
+        await self._nodes.on_node_suspect(msg.node, msg.incarnation)
 
-    async def _handle_suspect_message(self, message, client_addr):
-        LOG.trace("Handling SUSPECT message: node=%s", message.node)
+    # noinspection PyUnusedLocal
+    async def _handle_dead_message(self, msg, client):
+        LOG.trace("Handling DEAD message: node=%s", msg.node)
 
-    async def _handle_dead_message(self, message, client_addr):
-        LOG.trace("Handling DEAD message: node=%s", message.node)
+        await self._nodes.on_node_dead(msg.node, msg.incarnation)
 
-    async def _handle_ping_message(self, msg, client_addr):
+    # noinspection PyUnusedLocal
+    async def _handle_ping_message(self, msg, client):
         """
         Handle a PingRequestMessage
         :type msg: messages.PingMessage
@@ -674,7 +697,8 @@ class Cluster(object):
         LOG.debug("Sending ACK (%d) to %s", msg.seq, msg.sender_addr)
         await self._send_udp_message(msg.sender_addr.address, msg.sender_addr.port, ack)
 
-    async def _handle_ping_request_message(self, msg, client_addr):
+    # noinspection PyUnusedLocal
+    async def _handle_ping_request_message(self, msg, client):
         """
         Handle a PingRequestMessage
         :type msg: messages.PingRequestMessage
@@ -686,6 +710,7 @@ class Cluster(object):
         next_seq = self._ping_seq.increment()
 
         # wait for the probe
+        # noinspection PyUnusedLocal
         async def _forward_indirect_probe_result(node, seq):
             # create AckMessage
             ack = messages.AckMessage(msg.seq, sender=self.local_node_name)
@@ -705,7 +730,8 @@ class Cluster(object):
         LOG.debug("Sending PING (%d) to %s in response to PING-REQ (%d)", next_seq, msg.node_addr, msg.seq)
         await self._send_udp_message(msg.node_addr.address, msg.node_addr.port, ping)
 
-    async def _handle_ack_message(self, msg, client_addr):
+    # noinspection PyUnusedLocal
+    async def _handle_ack_message(self, msg, client):
         LOG.trace("Handling ACK message (%d): sender=%s", msg.seq, msg.sender)
 
         # resolve pending probe

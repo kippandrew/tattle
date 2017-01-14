@@ -28,15 +28,6 @@ def calculate_transmit_limit(n, m):
     return scale * m
 
 
-def swap_random_nodes(nodes):
-    random_index = random.randint(0, len(nodes) - 1)
-    random_node = nodes[random_index]
-    last_node = nodes[len(nodes) - 1]
-    nodes[random_index] = last_node
-    nodes[len(nodes) - 1] = random_node
-    return nodes
-
-
 def select_random_nodes(k, nodes, predicate=None):
     selected = []
 

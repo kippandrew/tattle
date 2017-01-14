@@ -5,6 +5,7 @@ import struct
 import sys
 
 import msgpack
+
 # import six
 
 HEADER_LENGTH = 9  # 4 for length, 1 for flags, 4 crc
@@ -283,15 +284,33 @@ class SuspectMessage(Message):
     _fields_ = [
         "node",  # node name
         "incarnation",
+        "sender",
     ]
+
+    def __str__(self):
+        return "<%s %s>" % (self.__class__.__name__, self.node)
+
+
+class ConfirmMessage(Message):
+    _fields_ = [
+        "node",  # node name
+        "incarnation",
+        "sender",
+    ]
+
+    def __str__(self):
+        return "<%s %s>" % (self.__class__.__name__, self.node)
 
 
 class DeadMessage(Message):
     _fields_ = [
         "node",  # node name
         "incarnation",
-        "from"
+        "sender"
     ]
+
+    def __str__(self):
+        return "<%s %s>" % (self.__class__.__name__, self.node)
 
 
 class AliveMessage(Message):
@@ -301,8 +320,8 @@ class AliveMessage(Message):
         "incarnation"
     ]
 
-    def __init__(self, node, node_addr, incarnation):
-        super(AliveMessage, self).__init__(node, node_addr, incarnation)
+    def __init__(self, node, addr, incarnation):
+        super(AliveMessage, self).__init__(node, addr, incarnation)
 
     def __str__(self):
         return "<%s %s>" % (self.__class__.__name__, self.node)
