@@ -144,27 +144,27 @@ class Cluster(object):
         await self._tcp_listener.stop()
         await self._udp_listener.stop()
 
-        LOG.info("Shut down")
+        LOG.info("Node stopped")
 
-    async def join(self, nodes):
+    async def join(self, *other_nodes):
         """
         Join a cluster.
-        :param nodes: a list of node names or addresses
         :return:
         """
 
         # gather list of nodes to sync
-        # LOG.trace("Resolving %d nodes", len(nodes))
-        # sync_nodes = await [self._resolve_node_address(n) for n in nodes]
-        # LOG.trace("Attempting to join %d nodes", len(sync_nodes))
+        LOG.trace("Attempting to join nodes: %s", other_nodes)
 
-        for node_addr in nodes:
-            await self._sync_node(*node_addr)
+        # sync nodes
+        tasks = []
+        for node_host, node_port in other_nodes:
+            tasks.append(self._sync_node(node_host, node_port))
 
-            # # sync nodes
-            # done, pending = await asyncio.wait([self._sync_node(*node_addr) for node_addr in nodes], loop=self._loop)
-            # successful_nodes, failed_nodes = utilities.partition(lambda s: s is not None, done)
-            # LOG.debug("Successfully synced %d nodes (%d failed)", len(successful_nodes), len(failed_nodes))
+        # wait for syncs to complete
+        results = await asyncio.gather(*tasks, loop=self._loop, return_exceptions=True)
+
+        successful_nodes, failed_nodes = utilities.partition(lambda r: r is True, results)
+        LOG.debug("Successfully synced %d nodes (%d failed)", len(successful_nodes), len(failed_nodes))
 
     async def leave(self):
         """
@@ -427,10 +427,10 @@ class Cluster(object):
         # send message
         await stream.write_async(self._encode_message(messages.SyncMessage(remote_state=local_state)))
 
-    async def _sync_node(self, node_address, node_port):
+    async def _sync_node(self, node_host, node_port):
         """
         Sync with remote node
-        :param node_address:
+        :param node_host:
         :param node_port:
         :return:
         """
@@ -438,11 +438,11 @@ class Cluster(object):
         try:
 
             # connect to node
-            LOG.debug("Connecting to node %s:%d", node_address, node_port)
+            LOG.debug("Connecting to node %s:%d", node_host, node_port)
             try:
-                connection = await asyncstream.Client(self._loop).connect(node_address, node_port)
+                connection = await asyncstream.Client(self._loop).connect(node_host, node_port)
             except Exception:
-                LOG.exception("Error connecting to node %s:%d", node_address, node_port)
+                LOG.exception("Error connecting to node %s:%d", node_host, node_port)
                 return
 
             # send local state
