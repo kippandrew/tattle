@@ -1,8 +1,7 @@
+import asyncio
 import collections
 import random
 import time
-
-import asyncio
 
 from tattle import logging
 from tattle import messages
@@ -10,9 +9,10 @@ from tattle import timer
 from tattle import utilities
 
 __all__ = [
+    'NodeManager',
     'NODE_STATUS_ALIVE',
     'NODE_STATUS_DEAD',
-    'NODE_STATUS_SUSPECT'
+    'NODE_STATUS_SUSPECT',
 ]
 
 NODE_STATUS_ALIVE = 'ALIVE'
@@ -48,9 +48,10 @@ class Node(object):
 SuspectNode = collections.namedtuple('SuspectNode', ['timer', 'confirmations'])
 
 
-class NodeManager(collections.Sequence):
-    def __init__(self, queue):
+class NodeManager(collections.Sequence, collections.Mapping):
+    def __init__(self, queue, loop=None):
         self._queue = queue
+        self._loop = loop or asyncio.get_event_loop()
         self._nodes = list()
         self._nodes_map = dict()
         self._nodes_lock = asyncio.Lock()
@@ -60,7 +61,10 @@ class NodeManager(collections.Sequence):
         self._local_node_seq = utilities.Sequence()
 
     def __getitem__(self, index):
-        return self._nodes[index]
+        if isinstance(index, str):
+            return self._nodes_map[index]
+        else:
+            return self._nodes[index]
 
     def __iter__(self):
         return self._nodes.__iter__()
@@ -93,6 +97,16 @@ class NodeManager(collections.Sequence):
         await self.on_node_alive(local_node_name, incarnation, local_node_host, local_node_port, bootstrap=True)
 
     async def on_node_alive(self, name, incarnation, host, port, bootstrap=False):
+        """
+        Handle a Node alive notification
+
+        :param name:
+        :param incarnation:
+        :param host:
+        :param port:
+        :param bootstrap:
+        :return:
+        """
 
         # acquire node lock
         with (await self._nodes_lock):
@@ -124,60 +138,47 @@ class NodeManager(collections.Sequence):
                       current_node.incarnation,
                       incarnation)
 
-            # check node address
+            # return if conflicting node address
             if current_node.host != host or current_node.port != port:
-                LOG.warn("Conflicting node address for %s (current=%s:%d new=%s:%d)",
-                         name, current_node.host, current_node.port, host, port)
+                LOG.error("Conflicting node address for %s (current=%s:%d new=%s:%d)",
+                          name, current_node.host, current_node.port, host, port)
                 return
 
-            is_local_node = name == self._local_node_name
+            is_local_node = current_node is self.local_node
 
-            # bail if the incarnation number is older or the same at the current state, and this is not about us
+            # if this is not about us, return if the incarnation number is older or the same at the current state
             if not is_local_node and incarnation <= current_node.incarnation:
                 LOG.trace("%s is older then current state: %d <= %d", name,
                           incarnation, current_node.incarnation)
                 return
 
-            # bail if the incarnation number is older then the current state, and this is about us
+            # if this is about us, return if the incarnation number is older then the current state
             if is_local_node and incarnation < current_node.incarnation:
                 LOG.trace("%s is older then current state: %d < %d", name,
                           incarnation, current_node.incarnation)
                 return
 
-            # cancel suspect node
-            if self._is_suspect_node(current_node):
+            # if the node is suspect, alive message cancels the suspicion
+            if current_node.status == NODE_STATUS_SUSPECT:
                 await self._cancel_suspect_node(current_node)
 
-            # if this about the local node we need to refute, otherwise broadcast it
-            if is_local_node and not bootstrap:
-                LOG.trace("Node alive for local node: %s", name)
-                if incarnation == current_node.incarnation:
-                    return
+            # update the current node status and incarnation number
+            current_node.incarnation = incarnation
+            current_node.status = NODE_STATUS_ALIVE
 
-                # TODO: refute
-                raise NotImplementedError()
+            # broadcast alive message
+            self._broadcast_alive(current_node)
 
-            else:
-
-                # queue alive message for gossip
-                alive = messages.AliveMessage(node=name, addr=messages.InternetAddress(host, port),
-                                              incarnation=incarnation)
-                self._queue.push(name, messages.MessageEncoder.encode(alive))
-                LOG.trace("Queued message: %s", alive)
-
-                # Update the state and incarnation number
-                current_node.incarnation = incarnation
-                current_node.status = NODE_STATUS_ALIVE
-
-                LOG.info("Node alive: %s (incarnation %d)", name, incarnation)
+            LOG.info("Node alive: %s (incarnation %d)", name, incarnation)
 
     async def on_node_dead(self, name, incarnation):
+        """
+        Handle a Node dead notification
 
-        # acquire node lock
-        with (await self._nodes_lock):
-            pass
-
-    async def on_node_suspect(self, name, incarnation):
+        :param name:
+        :param incarnation:
+        :return:
+        """
 
         # acquire node lock
         with (await self._nodes_lock):
@@ -185,72 +186,147 @@ class NodeManager(collections.Sequence):
             # bail if this is a new node
             current_node = self._nodes_map.get(name)
             if current_node is None:
-                LOG.warn("Unknown node: %s", name)
+                LOG.warn("Ignoring unknown node: %s", name)
                 return
 
-            # bail if the incarnation number is older then the current state, and this is about us
+            # return if node is dead
+            if current_node.status == NODE_STATUS_DEAD:
+                LOG.trace("Ignoring dead node: %s", name)
+                return
+
+            # return if the incarnation number is older then the current state
             if incarnation < current_node.incarnation:
                 LOG.trace("%s is older then current state: %d < %d", current_node.name, incarnation,
                           current_node.incarnation)
                 return
 
-            # # check if node is currently under suspicion
-            # if self._is_suspect_node(name):
-            #
-            #     # if this is a suspicion confirmation is new broadcast it
-            #     if self._confirm_suspect_node(name):
-            #         # queue suspect message for gossip
-            #         msg = messages.SuspectMessage(node=current_node.name, incarnation=incarnation)
-            #         self._queue.push(current_node.name, messages.MessageEncoder.encode(msg))
-            #         LOG.trace("Queued message: %s", msg)
-            #
-            #     return
+            # if this is about the local node, we need to refute. otherwise broadcast it
+            if current_node is self.local_node:
+                LOG.debug("Refuting DEAD message (incarnation=%d)", incarnation)
+                self._refute()
+                return
 
-            # if this is about the local node, we need to refute, otherwise broadcast it
-            is_local_node = current_node.name == self._local_node_name
-            if is_local_node:
+            # if the node is suspect, alive message cancels the suspicion
+            if current_node.status == NODE_STATUS_SUSPECT:
+                await self._cancel_suspect_node(current_node)
 
-                # TODO: refute
-                raise NotImplementedError()
+            # update the current node status and incarnation number
+            current_node.incarnation = incarnation
+            current_node.status = NODE_STATUS_DEAD
 
-            else:
+            # broadcast dead message
+            self._broadcast_dead(current_node)
 
-                # queue suspect message for gossip
-                msg = messages.SuspectMessage(node=current_node.name, incarnation=current_node.incarnation)
-                self._queue.push(current_node.name, messages.MessageEncoder.encode(msg))
-                LOG.debug("Queued message: %s", msg)
+            LOG.error("Node dead: %s (incarnation %d)", name, incarnation)
 
-            # Update the state and incarnation number
-            current_node.incarnation = current_node.incarnation
-            current_node.status = NODE_STATUS_ALIVE
+    async def on_node_suspect(self, name, incarnation):
+        """
+        Handle a Node suspect notification
 
-            self._create_suspect_node(current_node.name)
+        :param name:
+        :param incarnation:
+        :return:
+        """
+
+        # acquire node lock
+        with (await self._nodes_lock):
+
+            # bail if this is a new node
+            current_node = self._nodes_map.get(name)
+            if current_node is None:
+                LOG.warn("Ignoring unknown node: %s", name)
+                return
+
+            # return if node is dead
+            if current_node.status == NODE_STATUS_DEAD:
+                LOG.trace("Ignoring DEAD node: %s", name)
+                return
+
+            # return if the incarnation number is older then the current state
+            if incarnation < current_node.incarnation:
+                LOG.trace("%s is older then current state: %d < %d", current_node.name, incarnation,
+                          current_node.incarnation)
+                return
+
+            # if this is about the local node, we need to refute. otherwise broadcast it
+            if current_node is self.local_node:
+                LOG.debug("Refuting SUSPECT message (incarnation=%d)", incarnation)
+                self._refute()
+                return
+
+            # check if node is currently under suspicion
+            if current_node.status == NODE_STATUS_SUSPECT:
+                # TODO: confirm suspect node
+                pass
+
+            # update the current node status and incarnation number
+            current_node.incarnation = incarnation
+            current_node.status = NODE_STATUS_SUSPECT
+
+            # create suspect node
+            await self._create_suspect_node(current_node)
+
+            # broadcast suspect message
+            self._broadcast_suspect(current_node)
+
+            LOG.warn("Node suspect: %s (incarnation %d)", name, incarnation)
+
+    # def _is_suspect(self, node):
+    #     return node.name in self._suspect_nodes
 
     async def _create_suspect_node(self, node):
 
-        # acquire suspects lock
+        async def _handle_suspect_timer():
+            LOG.debug("Suspect timer expired for %s", node.name)
+            await self.on_node_dead(node.name, node.incarnation)
+
         with (await self._suspect_nodes_lock):
-            def _handle_suspect_node_timer():
-                pass
+            # create a Timer
+            suspect_timer = timer.Timer(_handle_suspect_timer, 3, self._loop)
+            suspect_timer.start()
 
             # add node to suspects
-            self._suspect_nodes[node.name] = SuspectNode(timer.Timer(_handle_suspect_node_timer, 10), dict())
+            self._suspect_nodes[node.name] = SuspectNode(suspect_timer, dict())
 
-    async def _confirm_suspect_node(self, node):
-
-        # acquire suspects lock
-        with (await self._suspect_nodes_lock):
-            suspect = self._suspect_nodes[node.name]
+            LOG.debug("Created suspect node: %s", node.name)
 
     async def _cancel_suspect_node(self, node):
-
         with (await self._suspect_nodes_lock):
-            # stop suspect timer
+            # stop suspect Timer
             suspect = self._suspect_nodes[node.name]
             suspect.timer.stop()
 
             # remove node from suspects
             del self._suspect_nodes[node.name]
 
-    def _is_suspect_node(self, node):
-        return node.name in self._suspect_nodes
+            LOG.debug("Canceled suspect node: %s", node.name)
+
+    def _send_broadcast(self, node, msg):
+        self._queue.push(node.name, messages.MessageEncoder.encode(msg))
+        LOG.trace("Queued message: %s", msg)
+
+    def _broadcast_alive(self, node):
+        LOG.debug("Broadcasting ALIVE message for node: %s (incarnation=%d)", node.name, node.incarnation)
+        alive = messages.AliveMessage(node=node.name,
+                                      addr=messages.InternetAddress(node.host, node.port),
+                                      incarnation=node.incarnation)
+        self._send_broadcast(node, alive)
+
+    def _broadcast_suspect(self, node):
+        LOG.debug("Broadcasting SUSPECT message for node: %s (incarnation=%d)", node.name, node.incarnation)
+        suspect = messages.SuspectMessage(node=node.name, incarnation=node.incarnation, sender=self.local_node.name)
+        self._send_broadcast(node, suspect)
+
+    def _broadcast_dead(self, node):
+        LOG.debug("Broadcasting DEAD message for node: %s (incarnation=%d)", node.name, node.incarnation)
+        dead = messages.DeadMessage(node=node.name, incarnation=node.incarnation, sender=self.local_node.name)
+        self._send_broadcast(node, dead)
+
+    def _refute(self):
+
+        # increment local node incarnation
+        self.local_node.incarnation = self._local_node_seq.increment()
+        LOG.trace("Refuting message (new incarnation %d)", self.local_node.incarnation)
+
+        # broadcast alive message
+        self._broadcast_alive(self.local_node)

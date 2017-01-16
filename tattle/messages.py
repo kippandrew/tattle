@@ -291,17 +291,6 @@ class SuspectMessage(Message):
         return "<%s %s>" % (self.__class__.__name__, self.node)
 
 
-class ConfirmMessage(Message):
-    _fields_ = [
-        "node",  # node name
-        "incarnation",
-        "sender",
-    ]
-
-    def __str__(self):
-        return "<%s %s>" % (self.__class__.__name__, self.node)
-
-
 class DeadMessage(Message):
     _fields_ = [
         "node",  # node name

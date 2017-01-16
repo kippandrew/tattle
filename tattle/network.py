@@ -267,6 +267,10 @@ class UDPListener(AbstractListener):
         """
         try:
 
+            # check if future was cancelled
+            if future.cancelled():
+                return
+
             # handle future error
             error = future.exception()
             if error is not None:

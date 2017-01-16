@@ -16,16 +16,16 @@ class Timer(object):
         self._loop = loop or asyncio.get_event_loop()
         self._handle = None
 
-    async def start(self):
+    def start(self):
         assert self._handle is None
         self._handle = self._loop.call_later(self.time, self._run)
 
-    async def reset(self, time):
+    def reset(self, time):
         self.stop()
         self.time = time
         self.start()
 
-    async def stop(self):
+    def stop(self):
         assert self._handle is not None
         self._handle.cancel()
 
