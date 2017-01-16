@@ -1,10 +1,14 @@
-import sys
 import asyncio
+import functools
+import threading
+import sys
 
 import tattle
 import tattle.logging
 
 last_node = 1
+
+nodes = []
 
 
 def configure_node():
@@ -16,11 +20,47 @@ def configure_node():
     return cfg
 
 
-async def start_node():
+def start_node(members=None):
     config = configure_node()
-    node = tattle.Cluster(config)
-    await node.start()
-    return node
+    # node = ClusterThread(config, members=members, loop=asyncio.new_event_loop())
+    # node.start()
+    # return node
+    loop = asyncio.new_event_loop()
+    node = tattle.Cluster(config, loop=loop)
+    nodes.append(node)
+    thread = NodeThread(node, loop, members)
+    thread.start()
+    return node, thread
+
+
+class NodeThread(threading.Thread):
+    def __init__(self, node, loop, members=None):
+        self.node = node
+        self.loop = loop
+        self.members = members
+        self.future = loop.create_future()
+        super().__init__(name=node.local_node_name, daemon=True)
+
+    async def _start_node(self):
+        await self.node.start()
+        if self.members is not None:
+            await self.node.join(self.members)
+
+    async def _stop_node(self):
+        await self.node.stop()
+
+    def run(self):
+        self.loop.run_until_complete(self._start_node())
+
+        try:
+            self.loop.run_until_complete(self.future)
+        except asyncio.CancelledError:
+            print("Stopping node: %s" % self.name)
+
+        self.loop.run_until_complete(self._stop_node())
+
+    def stop(self):
+        self.loop.call_soon(lambda: self.future.cancel())
 
 
 def wait_until_converged(nodes):
@@ -41,19 +81,9 @@ async def shutdown():
 
 
 async def run():
-    node1 = await start_node()
-    node2 = await start_node()
-    node3 = await start_node()
-    # node4 = await start_node()
-    # node5 = await start_node()
-    # node6 = await start_node()
-    # node7 = await start_node()
-
-    await node1.join([(node2.local_node_address, node2.local_node_port)])
-    await asyncio.sleep(1)
-
-    await node3.join([(node2.local_node_address, node2.local_node_port)])
-    await asyncio.sleep(1)
+    node1, node1_thread = start_node()
+    node2, node2_thread = start_node([(node1.local_node_address, node1.local_node_port)])
+    node3, node3_thread = start_node([(node1.local_node_address, node1.local_node_port)])
 
     timeout = 30
     try:
@@ -66,7 +96,12 @@ async def run():
         print(node2.config.node_name, node2.members)
         print(node3.config.node_name, node3.members)
 
-        return await shutdown()
+    # await asyncio.sleep(1)
+
+    node3_thread.stop()
+    # node3.stop()
+
+    # return await shutdown()
 
 
 # init logging

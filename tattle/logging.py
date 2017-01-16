@@ -40,7 +40,7 @@ def init_logger(level=logging.DEBUG):
 
     # configure root logger
     logger = logging.getLogger()
-    formatter = ConsoleLogFormatter('[%(context)s] [%(asctime)s] [$LEVEL%(name)s$RESET] %(message)s')
+    formatter = ConsoleLogFormatter('[%(threadName)s] [%(asctime)s] [$LEVEL%(name)s$RESET] %(message)s')
     handler = logging.StreamHandler(stream=sys.stdout)
     handler.addFilter(LogContextFilter())
     handler.setFormatter(formatter)
