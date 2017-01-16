@@ -291,3 +291,19 @@ class UDPListener(AbstractListener):
             LOG.exception("Error handling data")
 
         self._read_data()
+
+
+def parse_address(address):
+    if ':' in address:
+        host, _, port = address.partition(':')
+        return host, int(port)
+    return address, None
+
+
+def make_address(host, port, protocol=None):
+    address = host
+    if port is not None:
+        address = host + ":" + str(port)
+        if protocol is not None:
+            address = protocol.lower() + "://" + address
+    return address

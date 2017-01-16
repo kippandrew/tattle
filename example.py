@@ -106,7 +106,7 @@ async def run():
         await asyncio.wait_for(wait_until_converged(), timeout)
     except asyncio.TimeoutError:
         print("Failed to converge after {} seconds".format(timeout), file=sys.stderr)
-        sys.exit(1)
+        # sys.exit(1)
     finally:
         dump_nodes()
 
@@ -120,15 +120,15 @@ async def run():
         await asyncio.wait_for(wait_until_converged(all_nodes - {node3}), timeout)
     except asyncio.TimeoutError:
         print("Failed to converge after {} seconds".format(timeout), file=sys.stderr)
-        sys.exit(1)
+        # sys.exit(1)
     finally:
         dump_nodes()
 
-    stop_nodes()
+    # stop_nodes()
 
 
 # init logging
-logger = tattle.logging.init_logger(tattle.logging.INFO)
+logger = tattle.logging.init_logger(tattle.logging.TRACE)
 
 # lets go!
 asyncio.get_event_loop().run_until_complete(run())

@@ -2,16 +2,17 @@ import asynctest
 import unittest
 import unittest.mock
 
+from tattle import config
 from tattle import state
 from tattle import messages
 
 
+# noinspection PyTypeChecker
 class NodeManagerTestCase(asynctest.TestCase):
     async def setUp(self):
         super(NodeManagerTestCase, self).setUp()
-
         self.queue = unittest.mock.Mock()
-        self.nodes = state.NodeManager(self.queue, self.loop)
+        self.nodes = state.NodeManager(config.DefaultConfiguration(), self.queue, self.loop)
 
         # create a local node
         await self.nodes.set_local_node('local-node', '127.0.0.1', 7800)
@@ -55,6 +56,7 @@ class NodeManagerTestCase(asynctest.TestCase):
         self.assertEqual(local_node.incarnation, 2)
         self.assertEqual(local_node.status, state.NODE_STATUS_ALIVE)
 
+        # suspecting the local node should be refuted (sand Alive)
         expected_message = messages.AliveMessage('local-node', messages.InternetAddress('127.0.0.1', 7800), 2)
         self.queue.push.assert_called_with('local-node', messages.MessageEncoder.encode(expected_message))
 

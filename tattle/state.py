@@ -1,12 +1,13 @@
 import asyncio
 import collections
+import math
 import random
 import time
 
 from tattle import logging
 from tattle import messages
 from tattle import timer
-from tattle import utilities
+from tattle import sequence
 
 __all__ = [
     'NodeManager',
@@ -20,6 +21,44 @@ NODE_STATUS_SUSPECT = 'SUSPECT'
 NODE_STATUS_DEAD = 'DEAD'
 
 LOG = logging.get_logger(__name__)
+
+
+def _calculate_suspicion_timeout(n, interval):
+    """
+    Calculate initial suspicion timeout
+    :param n: number of nodes
+    :param interval: probe interval in seconds
+    :return: timeout in s
+    """
+    scale = max(1, math.log10(max(1, n)))
+    return scale * interval
+
+
+def _update_suspicion_timeout(n, k, elapsed, max_timeout, min_timeout):
+    """
+    Calculate a new suspicion timeout
+    :param n: number of confirmations received
+    :param k: number of confirmation expected
+    :param max_timeout: max timeout in seconds
+    :param min_timeout: min timeout in seconds
+    :return:
+    """
+    ratio = math.log10(n + 1) / math.log10(k + 1)
+    timeout = max_timeout - ratio * (max_timeout - min_timeout)
+    timeout = max(min_timeout, timeout)
+    return timeout - elapsed
+
+
+def _calculate_expected_confirmations(n, multi):
+    """
+    Calculate number of expected confirmations
+    :param n: number of nodes
+    :return:
+    """
+    k = multi - 2
+    if n - 2 < k:
+        k = 0
+    return k
 
 
 class Node(object):
@@ -45,11 +84,23 @@ class Node(object):
         return "<Node %s status:%s>" % (self.name, self.status)
 
 
-SuspectNode = collections.namedtuple('SuspectNode', ['timer', 'confirmations'])
+SuspectNode = collections.namedtuple('SuspectNode', ['timer', 'k', 'min_timeout', 'max_timeout', 'confirmations'])
 
 
 class NodeManager(collections.Sequence, collections.Mapping):
-    def __init__(self, queue, loop=None):
+    """
+    The NodeManager manages the membership state of the Cluster.
+    """
+
+    def __init__(self, config, queue, loop=None):
+        """
+        Initialize instance of the NodeManager class
+        :param config:
+        :param queue:
+        :type config: tattle.config.Configuration
+        :type queue tattle.queue.MessageQueue
+        """
+        self.config = config
         self._queue = queue
         self._loop = loop or asyncio.get_event_loop()
         self._nodes = list()
@@ -58,7 +109,7 @@ class NodeManager(collections.Sequence, collections.Mapping):
         self._suspect_nodes = dict()
         self._suspect_nodes_lock = asyncio.Lock()
         self._local_node_name = None
-        self._local_node_seq = utilities.Sequence()
+        self._local_node_seq = sequence.Sequence()
 
     def __getitem__(self, index):
         if isinstance(index, str):
@@ -85,7 +136,7 @@ class NodeManager(collections.Sequence, collections.Mapping):
 
     async def set_local_node(self, local_node_name, local_node_host, local_node_port):
         """
-        Set local node as alive
+        Set the local node as alive
         """
         assert self._local_node_name is None
         self._local_node_name = local_node_name
@@ -271,6 +322,10 @@ class NodeManager(collections.Sequence, collections.Mapping):
 
             LOG.warn("Node suspect: %s (incarnation %d)", name, incarnation)
 
+    async def _confirm_suspect_node(self, node):
+
+        pass
+
     async def _create_suspect_node(self, node):
 
         async def _handle_suspect_timer():
@@ -278,17 +333,34 @@ class NodeManager(collections.Sequence, collections.Mapping):
             await self.on_node_dead(node.name, node.incarnation)
 
         with (await self._suspect_nodes_lock):
-
             # ignore if pending timer exists
             if node.name in self._suspect_nodes:
                 return
 
-            # create a Timer
-            suspect_timer = timer.Timer(_handle_suspect_timer, 3, self._loop)
-            suspect_timer.start()
+            n = len(self._nodes)
+            k = _calculate_expected_confirmations(n, self.config.suspicion_min_timeout_multi)
+            interval = self.config.probe_interval / 1000  # convert interval to seconds
+            min_timeout = self.config.suspicion_min_timeout_multi * _calculate_suspicion_timeout(n, interval)
+            max_timeout = self.config.suspicion_max_timeout_multi * min_timeout
+
+            if k < 1:
+                timeout = max_timeout
+            else:
+                timeout = min_timeout
+
+            LOG.debug("Starting suspicion timer: timeout=%0.4f k=%d min=%0.4f max=%0.4f",
+                      timeout,
+                      k,
+                      min_timeout,
+                      max_timeout)
 
             # add node to suspects
-            self._suspect_nodes[node.name] = SuspectNode(suspect_timer, dict())
+            self._suspect_nodes[node.name] = SuspectNode(timer.Timer(_handle_suspect_timer, timeout, self._loop),
+                                                         k,
+                                                         min_timeout,
+                                                         max_timeout,
+                                                         dict())
+            self._suspect_nodes[node.name].timer.start()
 
             LOG.debug("Created suspect node: %s", node.name)
 
@@ -332,3 +404,24 @@ class NodeManager(collections.Sequence, collections.Mapping):
 
         # broadcast alive message
         self._broadcast_alive(self.local_node)
+
+
+def select_random_nodes(k, nodes, predicate=None):
+    selected = []
+
+    k = min(k, len(nodes))
+    c = 0
+
+    while len(selected) < k and c <= (3 * len(nodes)):
+        c += 1
+        node = random.choice(nodes)
+        if node in selected:
+            continue
+
+        if predicate is not None:
+            if not predicate(node):
+                continue
+
+        selected.append(node)
+
+    return selected

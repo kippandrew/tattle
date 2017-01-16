@@ -2,6 +2,7 @@ import asyncio
 import asyncstream
 import collections
 import io
+import math
 import struct
 import time
 
@@ -10,6 +11,7 @@ from tattle import messages
 from tattle import network
 from tattle import schedule
 from tattle import state
+from tattle import sequence
 from tattle import queue
 from tattle import utilities
 
@@ -20,6 +22,11 @@ __all__ = [
 LOG = logging.get_logger(__name__)
 
 ProbeStatus = collections.namedtuple('ProbeStatus', ['future'])
+
+
+def _calculate_transmit_limit(n, m):
+    scale = math.ceil(math.log10(n + 1))
+    return scale * m
 
 
 class Cluster(object):
@@ -35,8 +42,8 @@ class Cluster(object):
 
         self._leaving = False
 
-        self._ping_seq = utilities.Sequence()
-        self._node_seq = utilities.Sequence()
+        self._ping_seq = sequence.Sequence()
+        self._node_seq = sequence.Sequence()
 
         # init listeners
         self._udp_listener = self._init_listener_udp()
@@ -72,7 +79,7 @@ class Cluster(object):
         return queue.MessageQueue()
 
     def _init_state(self):
-        return state.NodeManager(self._queue, loop=self._loop)
+        return state.NodeManager(self.config, self._queue, loop=self._loop)
 
     def _init_probe(self):
         self._probe_schedule = schedule.ScheduledCallback(self._do_probe, self.config.probe_interval, loop=self._loop)
@@ -247,7 +254,7 @@ class Cluster(object):
         def _find_nodes(n):
             return n.name != self.local_node_name and n.status != state.NODE_STATUS_DEAD
 
-        sync_node = next(iter(utilities.select_random_nodes(self.config.sync_nodes, self._nodes, _find_nodes)), None)
+        sync_node = next(iter(state.select_random_nodes(self.config.sync_nodes, self._nodes, _find_nodes)), None)
         if sync_node is None:
             return
 
@@ -350,7 +357,7 @@ class Cluster(object):
 
         # send indirect ping to k nodes
         probes = []
-        for indirect_node in utilities.select_random_nodes(k, self._nodes, _find_nodes):
+        for indirect_node in state.select_random_nodes(k, self._nodes, _find_nodes):
             probes.append(self._probe_node_indirect_via(target_node, indirect_node))
 
         try:
@@ -529,7 +536,7 @@ class Cluster(object):
         buf += self._encode_message(msg)
 
         # max_messages = len(self._nodes)
-        max_transmits = utilities.calculate_transmit_limit(len(self._nodes), self.config.retransmit_multiplier)
+        max_transmits = _calculate_transmit_limit(len(self._nodes), self.config.retransmit_multi)
         max_bytes = 1024 - len(buf)
 
         # gather gossip messages (already encoded)
