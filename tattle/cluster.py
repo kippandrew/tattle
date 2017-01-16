@@ -1,11 +1,9 @@
 import asyncio
+import asyncstream
 import collections
 import io
 import struct
-
 import time
-
-import asyncstream
 
 from tattle import logging
 from tattle import messages
@@ -35,14 +33,10 @@ class Cluster(object):
 
         self._loop = loop or asyncio.get_event_loop()
 
-        # self._ioloop = ioloop.IOLoop.current()
-        # self._leaving = False
+        self._leaving = False
 
         self._ping_seq = utilities.Sequence()
         self._node_seq = utilities.Sequence()
-
-        # init resolver
-        # self._resolver = netutil.Resolver()
 
         # init listeners
         self._udp_listener = self._init_listener_udp()
@@ -234,9 +228,16 @@ class Cluster(object):
         LOG.debug("Probing node: %s", node)
 
         try:
-            await self._probe_node(node)
+            # send ping messages
+            self._loop.create_task(self._probe_node(node))
         except Exception:
             LOG.exception("Error running probe")
+
+        try:
+            # send indirect ping messages
+            self._loop.create_task(self._probe_node_indirect(node, self.config.probe_indirect_nodes))
+        except Exception:
+            LOG.exception("Error running indirect probe")
 
     async def _do_sync(self):
         """
@@ -253,7 +254,7 @@ class Cluster(object):
         LOG.debug("Syncing node: %s", sync_node)
 
         try:
-            await self._sync_node(sync_node.address, sync_node.port)
+            await self._sync_node(sync_node.host, sync_node.port)
         except Exception:
             LOG.exception("Error running sync")
 
@@ -285,23 +286,26 @@ class Cluster(object):
         try:
             result = await waiter
         except asyncio.TimeoutError:
-            LOG.debug("Timeout waiting for ACK %d", next_seq)
             await self._handle_probe_timeout(target_node)
         else:
             await self._handle_probe_result(target_node, result)
 
-        # send indirect ping messages
-        await self._probe_node_indirect(target_node, self.config.probe_indirect_nodes)
-
     async def _handle_probe_result(self, node, result):
-        LOG.debug("Probe successful for node: %s (%s)", node.name, result)
+        if result:
+            LOG.debug("Probe successful for node: %s result=%s", node.name, result)
 
-        # if node is suspect notify, then node is alive
-        if node.status == state.NODE_STATUS_SUSPECT:
-            await self._nodes.on_node_alive(node.name, node.incarnation, node.host, node.port)
+            # if node is suspect notify, then node is alive
+            if node.status == state.NODE_STATUS_SUSPECT:
+                LOG.warn("Suspect node is alive: %s", node.name)
+
+                await self._nodes.on_node_alive(node.name, node.incarnation, node.host, node.port)
+
+        else:
+            LOG.debug("Probe failed for node: %s result=%s", node.name, result)
+            raise NotImplementedError()
 
     async def _handle_probe_timeout(self, node):
-        LOG.error("Probe failed for node: %s", node.name)
+        LOG.debug("Probe failed for node: %s", node.name)
 
         # notify node is suspect
         await self._nodes.on_node_suspect(node.name, node.incarnation)
@@ -311,32 +315,28 @@ class Cluster(object):
         # start a timer
         start_time = time.time()
 
-        def _handle_future(f):
-            LOG.trace("Probe result for ACK (%d) elapsed time: %0.2fs", seq, time.time() - start_time)
-
-            # remove pending probe status
-            del self._probe_status[seq]
-
         # create a Future
         future = self._loop.create_future()
-
-        # call handler when future is done
-        future.add_done_callback(_handle_future)
 
         # save future to be resolved when an ack is received
         self._probe_status[seq] = future
 
         try:
-            # wait for timeout, then raise TimeoutError
-            await asyncio.wait_for(future, timeout=self.config.probe_timeout / 1000, loop=self._loop)
+            # wait for timeout
+            LOG.trace("Waiting for probe (seq=%d)", seq)
+            result = await asyncio.wait_for(future, timeout=self.config.probe_timeout / 1000, loop=self._loop)
         except asyncio.TimeoutError:
+            end_time = time.time()
+            LOG.trace("Timeout waiting for probe (seq=%d) elapsed time: %0.2f", seq, end_time - start_time)
+            raise  # re-raise TimeoutError
+        finally:
+            # remove pending probe status
+            del self._probe_status[seq]
 
-            # cancel future
-            future = self._probe_status[seq]
-            future.cancel()
+        end_time = time.time()
+        LOG.trace("Successful probe (seq=%d) elapsed time: %0.2fs", seq, end_time - start_time)
 
-            # re-raise TimeoutError
-            raise
+        return result
 
     async def _probe_node_indirect(self, target_node, k):
         """
@@ -346,7 +346,7 @@ class Cluster(object):
         """
 
         def _find_nodes(n):
-            return n.name != target_node.name and n.name != self.local_node_name and n.status != state.NODE_STATUS_DEAD
+            return n.name != target_node.name and n.name != self.local_node_name and n.status == state.NODE_STATUS_ALIVE
 
         # send indirect ping to k nodes
         probes = []
@@ -355,6 +355,7 @@ class Cluster(object):
 
         try:
             results = await asyncio.gather(*probes, loop=self._loop)
+            # TODO: check results
         except:
             LOG.exception("Error probing nodes")
 
@@ -383,7 +384,7 @@ class Cluster(object):
         try:
             result = await waiter
         except asyncio.TimeoutError:
-            LOG.debug("Timeout waiting for ACK %d", next_seq)
+            LOG.debug("Timeout waiting for indirect ACK %d", next_seq)
             await self._handle_probe_timeout(target_node)
         else:
             await self._handle_probe_result(target_node, result)
@@ -523,8 +524,6 @@ class Cluster(object):
     async def _send_udp_message(self, host, port, msg):
         LOG.trace("Sending %s to %s:%d", msg, host, port)
 
-        # connection = network.UDPClient().connect(node_address, node_port)
-
         # encode message
         buf = bytes()
         buf += self._encode_message(msg)
@@ -539,7 +538,7 @@ class Cluster(object):
             LOG.trace("Gossip message max-transmits: %d", max_transmits)
 
         for g in gossip:
-            LOG.debug("Piggy-backing message %s to %s:%d", self._decode_message(g), host, port)
+            LOG.trace("Piggy-backing message %s to %s:%d", self._decode_message(g), host, port)
             buf += g
 
         # send message
@@ -607,13 +606,13 @@ class Cluster(object):
             # read until closed
             while True:
 
+                # read a message
                 try:
                     raw = self._read_udp_message(reader)
+                    if raw is None:
+                        break
                 except IOError:
                     LOG.exception("Error reading stream")
-                    break
-
-                if raw is None:
                     break
 
                 # decode the message
@@ -649,6 +648,9 @@ class Cluster(object):
             elif isinstance(message, messages.AckMessage):
                 # noinspection PyTypeChecker
                 await self._handle_ack_message(message, client)
+            elif isinstance(message, messages.NackMessage):
+                # noinspection PyTypeChecker
+                await self._handle_nack_message(message, client)
             else:
                 LOG.warn("Unknown message type: %r", message.__class__)
                 return
@@ -713,7 +715,7 @@ class Cluster(object):
             result = await waiter
         except asyncio.TimeoutError:
             LOG.debug("Timeout waiting for ACK %d", next_seq)
-            await self._forward_indirect_probe_timeout(msg)
+            # await self._forward_indirect_probe_timeout(msg)
         else:
             await self._forward_indirect_probe_result(msg)
 
@@ -724,11 +726,22 @@ class Cluster(object):
         # resolve pending probe
         ack_seq = msg.seq
         if ack_seq in self._probe_status:
-
-            self._probe_status[ack_seq].set_result(msg.seq)
-
+            LOG.debug("Resolving probe (seq=%d) result=%s", msg.seq, True)
+            self._probe_status[ack_seq].set_result(True)
         else:
             LOG.warn("Received ACK for unknown probe: %d from %s", msg.seq, msg.sender)
+
+    # noinspection PyUnusedLocal
+    async def _handle_nack_message(self, msg, client):
+        LOG.trace("Handling NACK message (%d): sender=%s", msg.seq, msg.sender)
+
+        # resolve pending probe
+        ack_seq = msg.seq
+        if ack_seq in self._probe_status:
+            LOG.debug("Resolving probe (seq=%d) result=%s", msg.seq, False)
+            self._probe_status[ack_seq].set_result(False)
+        else:
+            LOG.warn("Received NACK for unknown probe: %d from %s", msg.seq, msg.sender)
 
     async def _forward_indirect_probe_result(self, msg):
         # create AckMessage
@@ -737,4 +750,7 @@ class Cluster(object):
         await self._send_udp_message(msg.sender_addr.address, msg.sender_addr.port, ack)
 
     async def _forward_indirect_probe_timeout(self, msg):
-        pass
+        # create NackMessage
+        ack = messages.NackMessage(msg.seq, sender=self.local_node_name)
+        LOG.debug("Forwarding NACK (%d) to %s", msg.seq, msg.node)
+        await self._send_udp_message(msg.sender_addr.address, msg.sender_addr.port, ack)

@@ -1,5 +1,5 @@
 import asyncio
-import functools
+import random
 import threading
 import sys
 
@@ -8,7 +8,8 @@ import tattle.logging
 
 last_node = 1
 
-nodes = []
+all_nodes = set()
+all_threads = dict()
 
 
 def configure_node():
@@ -20,31 +21,30 @@ def configure_node():
     return cfg
 
 
-def start_node(members=None):
+def start_node():
     config = configure_node()
-    # node = ClusterThread(config, members=members, loop=asyncio.new_event_loop())
-    # node.start()
-    # return node
     loop = asyncio.new_event_loop()
     node = tattle.Cluster(config, loop=loop)
-    nodes.append(node)
-    thread = NodeThread(node, loop, members)
+    thread = NodeThread(node, join_nodes=[random.choice(list(all_nodes))] if all_nodes else None, loop=loop)
     thread.start()
+    all_nodes.add(node)
+    all_threads[node] = thread
     return node, thread
 
 
 class NodeThread(threading.Thread):
-    def __init__(self, node, loop, members=None):
+    def __init__(self, node, join_nodes=None, loop=None):
         self.node = node
+        self.join_nodes = [(n.local_node_address, n.local_node_port) for n in
+                           join_nodes] if join_nodes is not None else None
         self.loop = loop
-        self.members = members
         self.future = loop.create_future()
         super().__init__(name=node.local_node_name, daemon=True)
 
     async def _start_node(self):
         await self.node.start()
-        if self.members is not None:
-            await self.node.join(self.members)
+        if self.join_nodes is not None:
+            await self.node.join(self.join_nodes)
 
     async def _stop_node(self):
         await self.node.stop()
@@ -63,49 +63,81 @@ class NodeThread(threading.Thread):
         self.loop.call_soon(lambda: self.future.cancel())
 
 
-def wait_until_converged(nodes):
+def wait_until_converged(expected_nodes=None):
+    if expected_nodes is None:
+        expected_nodes = all_nodes
+
     future = asyncio.Future()
 
+    status = lambda n: [(m.name, m.status) for m in n.members]
+
     def _check_converged():
-        if any(len(n.members) < len(nodes) for n in nodes):
-            asyncio.get_event_loop().call_later(0.2, _check_converged)
-            return
+        for e in expected_nodes:
+            if any(status(n) != status(e) for n in expected_nodes):
+                asyncio.get_event_loop().call_later(0.1, _check_converged)
+                return
         future.set_result(True)
 
     _check_converged()
     return future
 
 
-async def shutdown():
-    asyncio.get_event_loop().stop()
+def dump_nodes():
+    for n in all_nodes:
+        print(n.local_node_name, n.members)
+
+
+def stop_nodes():
+    for n in all_nodes:
+        all_threads[n].stop()
 
 
 async def run():
     node1, node1_thread = start_node()
-    node2, node2_thread = start_node([(node1.local_node_address, node1.local_node_port)])
-    node3, node3_thread = start_node([(node1.local_node_address, node1.local_node_port)])
+    node2, node2_thread = start_node()
+    node3, node3_thread = start_node()
+    node4, node4_thread = start_node()
+    node5, node5_thread = start_node()
 
-    timeout = 30
+    timeout = 5
     try:
-        await asyncio.wait_for(wait_until_converged([node1, node2, node3]), timeout)
+        await asyncio.wait_for(wait_until_converged(), timeout)
     except asyncio.TimeoutError:
         print("Failed to converge after {} seconds".format(timeout), file=sys.stderr)
-
+        sys.exit(1)
     finally:
-        print(node1.config.node_name, node1.members)
-        print(node2.config.node_name, node2.members)
-        print(node3.config.node_name, node3.members)
+        dump_nodes()
 
-    # await asyncio.sleep(1)
-
+    # stop node3
     node3_thread.stop()
-    # node3.stop()
+    await asyncio.sleep(5)
 
-    # return await shutdown()
+    timeout = 5
+    try:
+        # expect all nodes to agree
+        await asyncio.wait_for(wait_until_converged(all_nodes - {node3}), timeout)
+    except asyncio.TimeoutError:
+        print("Failed to converge after {} seconds".format(timeout), file=sys.stderr)
+        sys.exit(1)
+    finally:
+        dump_nodes()
+
+        # timeout = 10
+        # try:
+        #     await asyncio.wait_for(wait_until_converged(nodes), timeout)
+        # except asyncio.TimeoutError:
+        #     print("Failed to converge after {} seconds".format(timeout), file=sys.stderr)
+        #     sys.exit(0)
+        # finally:
+        #     dump_nodes()
+        #
+        # node3_thread.stop()
+
+    stop_nodes()
 
 
 # init logging
-logger = tattle.logging.init_logger(tattle.logging.TRACE)
+logger = tattle.logging.init_logger(tattle.logging.DEBUG)
 
 # lets go!
 asyncio.ensure_future(run())

@@ -251,7 +251,7 @@ class NodeManager(collections.Sequence, collections.Mapping):
             # if this is about the local node, we need to refute. otherwise broadcast it
             if current_node is self.local_node:
                 LOG.debug("Refuting SUSPECT message (incarnation=%d)", incarnation)
-                self._refute()
+                self._refute()  # don't mark ourselves suspect
                 return
 
             # check if node is currently under suspicion
@@ -271,9 +271,6 @@ class NodeManager(collections.Sequence, collections.Mapping):
 
             LOG.warn("Node suspect: %s (incarnation %d)", name, incarnation)
 
-    # def _is_suspect(self, node):
-    #     return node.name in self._suspect_nodes
-
     async def _create_suspect_node(self, node):
 
         async def _handle_suspect_timer():
@@ -281,6 +278,11 @@ class NodeManager(collections.Sequence, collections.Mapping):
             await self.on_node_dead(node.name, node.incarnation)
 
         with (await self._suspect_nodes_lock):
+
+            # ignore if pending timer exists
+            if node.name in self._suspect_nodes:
+                return
+
             # create a Timer
             suspect_timer = timer.Timer(_handle_suspect_timer, 3, self._loop)
             suspect_timer.start()

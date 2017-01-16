@@ -33,8 +33,8 @@ class DefaultConfiguration(Configuration):
         self.api_port = 7800
         self.retransmit_multiplier = 3
         self.probe_interval = 100
-        self.probe_timeout = 200
-        self.probe_indirect_nodes = 1
+        self.probe_timeout = 50
+        self.probe_indirect_nodes = 3
         self.sync_interval = 10000
 
         if self.node_name is None:
