@@ -1,10 +1,9 @@
 import asyncio
-import socket
-
-import asynctest
-
 import asyncstream
 import asyncstream.factory
+import asynctest
+import socket
+
 from tattle import network
 
 

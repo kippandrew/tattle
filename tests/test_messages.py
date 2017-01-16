@@ -31,7 +31,8 @@ class MessageDecoderTestCase(unittest.TestCase):
         self.assertEqual(orig, messages.MessageDecoder.decode(buf))
 
     def test_encode_list(self):
-        orig = messages.SyncMessage(remote_state=[messages.RemoteNodeState('test-node', '127.0.0.1', 12345)])
+        state = [messages.RemoteNodeState('test', messages.InternetAddress('127.0.0.0', 12345), 1, 'alive')]
+        orig = messages.SyncMessage(remote_state=state)
         buf = messages.MessageEncoder.encode(orig)
         new = messages.MessageDecoder.decode(buf)
         self.assertEqual(orig, new)

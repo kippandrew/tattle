@@ -1,5 +1,6 @@
 import datetime
 import random
+import unittest
 
 from tornado import concurrent
 from tornado import gen
@@ -12,8 +13,8 @@ from tests import integration
 logging.init_logger(logging.TRACE)
 
 
+@unittest.skip
 class ClusterIntegrationTest(integration.AbstractIntegrationTest):
-
     def _wait_until_converged(self, nodes):
         future = concurrent.TracebackFuture()
 
@@ -67,4 +68,3 @@ class ClusterIntegrationTest(integration.AbstractIntegrationTest):
     @testing.gen_test(timeout=10)
     def test_join_9(self):
         yield self._execute_cluster_converge_test(8)
-
