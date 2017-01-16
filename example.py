@@ -35,8 +35,7 @@ def start_node():
 class NodeThread(threading.Thread):
     def __init__(self, node, join_nodes=None, loop=None):
         self.node = node
-        self.join_nodes = [(n.local_node_address, n.local_node_port) for n in
-                           join_nodes] if join_nodes is not None else None
+        self.join_nodes = join_nodes or []
         self.loop = loop
         self.future = loop.create_future()
         super().__init__(name=node.local_node_name, daemon=True)
@@ -44,20 +43,23 @@ class NodeThread(threading.Thread):
     async def _start_node(self):
         await self.node.start()
         if self.join_nodes is not None:
-            await self.node.join(self.join_nodes)
+            await self.node.join(*[(n.local_node_address, n.local_node_port) for n in self.join_nodes])
 
     async def _stop_node(self):
         await self.node.stop()
 
     def run(self):
-        self.loop.run_until_complete(self._start_node())
-
         try:
-            self.loop.run_until_complete(self.future)
-        except asyncio.CancelledError:
-            print("Stopping node: %s" % self.name)
+            self.loop.run_until_complete(self._start_node())
 
-        self.loop.run_until_complete(self._stop_node())
+            try:
+                self.loop.run_until_complete(self.future)
+            except asyncio.CancelledError:
+                pass
+
+            self.loop.run_until_complete(self._stop_node())
+        finally:
+            self.loop.stop()
 
     def stop(self):
         self.loop.call_soon(lambda: self.future.cancel())
@@ -122,23 +124,11 @@ async def run():
     finally:
         dump_nodes()
 
-        # timeout = 10
-        # try:
-        #     await asyncio.wait_for(wait_until_converged(nodes), timeout)
-        # except asyncio.TimeoutError:
-        #     print("Failed to converge after {} seconds".format(timeout), file=sys.stderr)
-        #     sys.exit(0)
-        # finally:
-        #     dump_nodes()
-        #
-        # node3_thread.stop()
-
     stop_nodes()
 
 
 # init logging
-logger = tattle.logging.init_logger(tattle.logging.DEBUG)
+logger = tattle.logging.init_logger(tattle.logging.INFO)
 
 # lets go!
-asyncio.ensure_future(run())
-asyncio.get_event_loop().run_forever()
+asyncio.get_event_loop().run_until_complete(run())
