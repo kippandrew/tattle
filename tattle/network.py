@@ -105,7 +105,9 @@ class UDPConnection:
         :param addr:
         :return:
         """
-        return self._event_loop.sock_connect(self._socket, addr)
+        future = self._event_loop.sock_connect(self._socket, addr)
+        LOG.trace("UDP connection bind: %s", addr)
+        return future
 
     def bind(self, addr):
         """
@@ -114,6 +116,7 @@ class UDPConnection:
         :return:
         """
         self._socket.bind(addr)
+        LOG.trace("UDP connection bind: %s", addr)
 
     def close(self):
         """
@@ -121,7 +124,7 @@ class UDPConnection:
         :return: None
         """
         self._socket.close()
-        self._socket = None
+        LOG.trace("UDP connection closed")
 
     def send(self, data):
         """
@@ -191,6 +194,7 @@ class UDPConnection:
         return fut
 
     def _recvfrom(self, read_bytes, fut, registered):
+
         fd = self._socket.fileno()
 
         # Remove the reader if already registered
@@ -274,7 +278,7 @@ class UDPListener(AbstractListener):
             # handle future error
             error = future.exception()
             if error is not None:
-                LOG.error(error, exc_info=future.exc_info())
+                LOG.error(error, exc_info=future.exception())
                 return
 
             # get future result
