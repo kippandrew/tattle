@@ -1,5 +1,4 @@
 from tattle.api import *
-from tattle.client import *
 from tattle.cluster import *
 from tattle.config import *
 from tattle.json import *
