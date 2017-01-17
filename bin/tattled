@@ -5,7 +5,7 @@ import asyncio
 import tattle
 import tattle.logging
 
-LOG = tattle.logging.get_logger('tattled')
+LOG = tattle.logging.get_logger('tattle')
 
 
 def _parse_arguments():
@@ -35,14 +35,14 @@ if __name__ == '__main__':
         config.node_name = args.name
 
     if args.address is not None:
-        node_address, node_port = tattle.parse_address(args.address)
+        node_address, node_port = tattle.network.parse_address(args.address)
         if node_address is not None:
             config.node_address = node_address
         if node_port is not None:
             config.node_port = node_port
 
     if args.bind is not None:
-        bind_address, bind_port = tattle.parse_address(args.bind)
+        bind_address, bind_port = tattle.network.parse_address(args.bind)
         if bind_address is not None:
             config.bind_address = bind_address
         if bind_port is not None:

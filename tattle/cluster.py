@@ -361,8 +361,8 @@ class Cluster(object):
             probes.append(self._probe_node_indirect_via(target_node, indirect_node))
 
         try:
-            results = await asyncio.gather(*probes, loop=self._loop)
             # TODO: check results
+            await asyncio.gather(*probes, loop=self._loop)
         except:
             LOG.exception("Error probing nodes")
 
@@ -733,7 +733,7 @@ class Cluster(object):
         # resolve pending probe
         ack_seq = msg.seq
         if ack_seq in self._probe_status:
-            LOG.debug("Resolving probe (seq=%d) result=%s", msg.seq, True)
+            LOG.trace("Resolving probe (seq=%d) result=%s", msg.seq, True)
             self._probe_status[ack_seq].set_result(True)
         else:
             LOG.warn("Received ACK for unknown probe: %d from %s", msg.seq, msg.sender)
@@ -745,7 +745,7 @@ class Cluster(object):
         # resolve pending probe
         ack_seq = msg.seq
         if ack_seq in self._probe_status:
-            LOG.debug("Resolving probe (seq=%d) result=%s", msg.seq, False)
+            LOG.trace("Resolving probe (seq=%d) result=%s", msg.seq, False)
             self._probe_status[ack_seq].set_result(False)
         else:
             LOG.warn("Received NACK for unknown probe: %d from %s", msg.seq, msg.sender)

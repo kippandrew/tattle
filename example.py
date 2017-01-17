@@ -128,7 +128,7 @@ async def run():
 
 
 # init logging
-logger = tattle.logging.init_logger(tattle.logging.TRACE)
+logger = tattle.logging.init_logger(tattle.logging.DEBUG)
 
 # lets go!
 asyncio.get_event_loop().run_until_complete(run())
