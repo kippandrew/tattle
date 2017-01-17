@@ -89,6 +89,8 @@ class Node(object):
         self.host = host
         self.port = port
         self.incarnation = incarnation
+        self.version = 1
+        self.metadata = dict()
         self._status = status
         self._status_change_timestamp = None
 
@@ -157,7 +159,7 @@ class NodeManager(collections.Sequence, collections.Mapping):
         return self._nodes_map[self._local_node_name]
 
     async def set_local_node(self, local_node_name, local_node_host, local_node_port):
-        assert self._local_node_name is None
+        # assert self._local_node_name is None
         self._local_node_name = local_node_name
 
         # generate incarnation for the node
