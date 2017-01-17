@@ -27,9 +27,10 @@ LOG = logging.get_logger(__name__)
 def _calculate_suspicion_timeout(n, interval):
     """
     Calculate initial suspicion timeout
+
     :param n: number of nodes
     :param interval: probe interval in seconds
-    :return: timeout in s
+    :return: timeout in seconds
     """
     scale = max(1, math.log10(max(1, n)))
     return scale * interval
@@ -37,7 +38,8 @@ def _calculate_suspicion_timeout(n, interval):
 
 def _update_suspicion_timeout(n, k, elapsed, max_timeout, min_timeout):
     """
-    Calculate a new suspicion timeout
+    Calculate a new suspicion timeout after n confirmations
+
     :param n: number of confirmations received
     :param k: number of confirmation expected
     :param max_timeout: max timeout in seconds
@@ -53,6 +55,7 @@ def _update_suspicion_timeout(n, k, elapsed, max_timeout, min_timeout):
 def _calculate_expected_confirmations(n, multi):
     """
     Calculate number of expected confirmations
+
     :param n: number of nodes
     :return:
     """
@@ -119,10 +122,11 @@ class NodeManager(collections.Sequence, collections.Mapping):
     def __init__(self, config, queue, loop=None):
         """
         Initialize instance of the NodeManager class
-        :param config:
-        :param queue:
+
+        :param config: configu object
         :type config: tattle.config.Configuration
-        :type queue tattle.queue.BroadcastQueue
+        :param queue: broadcast queue
+        :type queue: tattle.queue.BroadcastQueue
         """
         self.config = config
         self._queue = queue
