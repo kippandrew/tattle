@@ -1,7 +1,4 @@
-import contextlib
 import logging
-import logging.config
-
 import sys
 
 TRACE, DEBUG, INFO, WARN, ERROR, NOTSET = 5, logging.DEBUG, logging.INFO, logging.WARN, logging.ERROR, logging.NOTSET
@@ -42,33 +39,11 @@ def init_logger(level=logging.DEBUG):
     logger = logging.getLogger()
     formatter = ConsoleLogFormatter('[%(threadName)s] [%(asctime)s] [$LEVEL%(name)s$RESET] %(message)s')
     handler = logging.StreamHandler(stream=sys.stdout)
-    handler.addFilter(LogContextFilter())
     handler.setFormatter(formatter)
     handler.setLevel(level)
     logger.setLevel(logging.NOTSET)
     logger.addHandler(handler)
     return logger
-
-
-# noinspection PyPep8Naming
-def LogContext(name):
-    """Factory to create LogContext context managers"""
-
-    @contextlib.contextmanager
-    def _context_manager():
-        LogContextFilter.context = name
-        yield
-        LogContextFilter.context = None
-
-    return _context_manager
-
-
-class LogContextFilter(logging.Filter):
-    context = None
-
-    def filter(self, record):
-        record.context = self.context
-        return True
 
 
 class ConsoleLogFormatter(logging.Formatter):

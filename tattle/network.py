@@ -7,7 +7,6 @@ from tattle import logging
 
 __all__ = [
     'TCPListener',
-    'TCPClient',
     'UDPConnection',
     'UDPListener',
 ]
