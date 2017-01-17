@@ -3,6 +3,8 @@ import random
 import threading
 import sys
 
+import requests
+
 import tattle
 import tattle.logging
 
@@ -12,44 +14,37 @@ all_nodes = set()
 all_threads = dict()
 
 
-def configure_node():
-    global last_node
-    cfg = tattle.DefaultConfiguration()
-    cfg.node_name = 'node-%d' % last_node
-    cfg.bind_port = 7900 + last_node
-    last_node += 1
-    return cfg
-
-
-def start_node():
-    config = configure_node()
-    loop = asyncio.new_event_loop()
-    node = tattle.Cluster(config, loop=loop)
-    thread = NodeThread(node, join_nodes=[random.choice(list(all_nodes))] if all_nodes else None, loop=loop)
-    thread.start()
-    all_nodes.add(node)
-    all_threads[node] = thread
-    return node, thread
-
-
 class NodeThread(threading.Thread):
-    def __init__(self, node, join_nodes=None, loop=None):
+    def __init__(self, node, loop=None):
         self.node = node
-        self.join_nodes = join_nodes or []
         self.loop = loop
+        self.api = None
+        self.server = None
+        self.handler = None
+
+        # self.join_nodes = join_nodes or []
         self.future = loop.create_future()
         super().__init__(name=node.local_node_name, daemon=True)
 
+    def _start_api(self):
+        self.api = tattle.APIServer(self.node, loop=self.loop)
+        handler, server = tattle.start_server(self.api, self.node.config.api_port, self.node.config.api_address)
+        self.handler = handler
+        self.server = server
+
+    def _stop_api(self):
+        tattle.stop_server(self.api, self.server, self.handler)
+
     async def _start_node(self):
         await self.node.start()
-        if self.join_nodes is not None:
-            await self.node.join(*[(n.local_node_address, n.local_node_port) for n in self.join_nodes])
 
     async def _stop_node(self):
         await self.node.stop()
 
     def run(self):
         try:
+            self._start_api()
+
             self.loop.run_until_complete(self._start_node())
 
             try:
@@ -58,11 +53,37 @@ class NodeThread(threading.Thread):
                 pass
 
             self.loop.run_until_complete(self._stop_node())
+
         finally:
+            self._stop_api()
             self.loop.stop()
 
-    def stop(self):
+    def die(self):
         self.loop.call_soon(lambda: self.future.cancel())
+
+
+class NodeClient:
+    def __init__(self, host='127.0.0.1', port=7800):
+        self.host = host
+        self.port = port
+
+    def _url(self, path):
+        return "http://{host}:{port}{path}".format(host=self.host, port=self.port, path=path)
+
+    def join(self, *nodes):
+        return requests.post(self._url('/cluster/join'), json=[{'host': n[0], 'port': n[1]} for n in nodes])
+
+    def leave(self):
+        return requests.post(self._url('/cluster/leave'))
+
+    def members(self):
+        return requests.get(self._url('/cluster/members/'))
+
+    def stop(self):
+        return requests.post(self._url('/cluster/stop'))
+
+    def start(self):
+        return requests.post(self._url('/cluster/start'))
 
 
 def wait_until_converged(expected_nodes=None):
@@ -84,6 +105,35 @@ def wait_until_converged(expected_nodes=None):
     return future
 
 
+def configure_node():
+    global last_node
+    cfg = tattle.DefaultConfiguration()
+    cfg.node_name = 'node-%d' % last_node
+    cfg.bind_port = 7900 + last_node
+    cfg.api_port = 7800 + last_node
+    last_node += 1
+    return cfg
+
+
+def start_node():
+    config = configure_node()
+    loop = asyncio.new_event_loop()
+    node = tattle.Cluster(config, loop=loop)
+    thread = NodeThread(node, loop=loop)
+    thread.start()
+
+    other_node = random.choice(list(all_nodes)) if all_nodes else None
+
+    all_nodes.add(node)
+    all_threads[node] = thread
+    client = NodeClient(port=config.api_port)
+
+    if other_node:
+        client.join((other_node.local_node_address, other_node.local_node_port))
+
+    return client
+
+
 def dump_nodes():
     for n in all_nodes:
         print(n.local_node_name, n.members)
@@ -91,40 +141,36 @@ def dump_nodes():
 
 def stop_nodes():
     for n in all_nodes:
-        all_threads[n].stop()
+        all_threads[n].die()
 
 
 async def run():
-    node1, node1_thread = start_node()
-    node2, node2_thread = start_node()
-    node3, node3_thread = start_node()
-    node4, node4_thread = start_node()
-    node5, node5_thread = start_node()
+    node1 = start_node()
+    node2 = start_node()
+    node3 = start_node()
+    node4 = start_node()
+    node5 = start_node()
 
     timeout = 5
     try:
         await asyncio.wait_for(wait_until_converged(), timeout)
     except asyncio.TimeoutError:
         print("Failed to converge after {} seconds".format(timeout), file=sys.stderr)
-        # sys.exit(1)
+        return
     finally:
         dump_nodes()
 
     # stop node3
-    node3_thread.stop()
+    node3.stop()
     await asyncio.sleep(5)
 
     timeout = 5
     try:
-        # expect all nodes to agree
-        await asyncio.wait_for(wait_until_converged(all_nodes - {node3}), timeout)
+        await asyncio.wait_for(wait_until_converged(), timeout)
     except asyncio.TimeoutError:
         print("Failed to converge after {} seconds".format(timeout), file=sys.stderr)
-        # sys.exit(1)
     finally:
         dump_nodes()
-
-    # stop_nodes()
 
 
 # init logging
