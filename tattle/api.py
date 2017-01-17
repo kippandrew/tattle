@@ -1,6 +1,6 @@
 import asyncio
-import traceback
 import sys
+import traceback
 
 from aiohttp import web
 
@@ -14,6 +14,19 @@ __all__ = [
 ]
 
 LOG = logging.get_logger(__name__)
+
+
+def _node_to_json(node):
+    return {
+        'name': node.name,
+        'host': node.host,
+        'port': node.port,
+        'incarnation': node.incarnation,
+        'version': node.version,
+        'status': node.status,
+        'metadata': {
+        }
+    }
 
 
 class APIError(web.HTTPError):
@@ -31,9 +44,11 @@ def error_middleware():
         def _write_exception_json(status_code=500, exc_info=None):
             if exc_info is None:
                 exc_info = sys.exc_info()
-            exception = exc_info[2]
-            error = {'error': "Internal Server Error"}
-            error['traceback'] = [t for t in traceback.format_exception(*exc_info)]
+            # exception = exc_info[2]
+            error = {
+                'error': "Internal Server Error",
+                'traceback': [t for t in traceback.format_exception(*exc_info)]
+            }
             return web.Response(status=status_code,
                                 body=json.to_json(error).encode('utf-8'),
                                 content_type='application/json')
@@ -61,7 +76,7 @@ def error_middleware():
 
 
 class APIServer(web.Application):
-    def __init__(self, cluster):
+    def __init__(self, cluster, loop=None):
         """
         Initialize instance of the APIServer class
         :param cluster:
@@ -71,11 +86,15 @@ class APIServer(web.Application):
         self.cluster = cluster
 
         # initialize super class
-        super(APIServer, self).__init__(middlewares=[error_middleware()])
+        super(APIServer, self).__init__(middlewares=[error_middleware()], loop=loop)
 
         # initialize routes
         self.router.add_route('*', '/cluster/join', JoinAPIHandler)
         self.router.add_route('*', '/cluster/leave', LeaveAPIHandler)
+        self.router.add_route('*', '/cluster/start', StartAPIHandler)
+        self.router.add_route('*', '/cluster/stop', StopAPIHandler)
+        self.router.add_route('*', '/cluster/ping', PingAPIHandler)
+        self.router.add_route('*', '/cluster/sync', SyncAPIHandler)
         self.router.add_route('*', '/cluster/members/', MemberAPIHandler)
 
         LOG.debug("Initialized APIServer")
@@ -88,21 +107,41 @@ class APIRequestHandler(web.View):
 
 
 class JoinAPIHandler(APIRequestHandler):
-    @asyncio.coroutine
-    def post(self):
-        pass
+    async def post(self):
+        nodes = await self.request.json()
+        await self.cluster.join(*[(n['host'], n['port']) for n in nodes])
+        return web.json_response()
 
 
 class LeaveAPIHandler(APIRequestHandler):
-    @asyncio.coroutine
-    def post(self):
-        pass
+    async def post(self):
+        await self.cluster.leave()
+        return web.json_response()
 
 
 class MemberAPIHandler(APIRequestHandler):
-    @asyncio.coroutine
-    def get(self):
-        return web.json_response(dict(members=self.cluster.members))
+    async def get(self):
+        return web.json_response(dict(members=[_node_to_json(m) for m in self.cluster.members]))
+
+
+class PingAPIHandler(APIRequestHandler):
+    pass
+
+
+class SyncAPIHandler(APIRequestHandler):
+    pass
+
+
+class StartAPIHandler(APIRequestHandler):
+    async def post(self):
+        await self.cluster.start()
+        return web.json_response()
+
+
+class StopAPIHandler(APIRequestHandler):
+    async def post(self):
+        await self.cluster.stop()
+        return web.json_response()
 
 
 def start_server(app, port, host='127.0.0.1'):
