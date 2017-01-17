@@ -1,10 +1,11 @@
 import asyncio
-import asyncstream
 import collections
 import io
 import math
 import struct
 import time
+
+import asyncstream
 
 from tattle import config
 from tattle import logging
@@ -37,7 +38,6 @@ class Cluster(object):
         """
         self.config = config
         self._loop = loop or asyncio.get_event_loop()
-        self._leaving = False
         self._ping_seq = sequence.Sequence()
 
         # init listeners
@@ -150,7 +150,7 @@ class Cluster(object):
 
         :return:
         """
-        raise NotImplementedError()
+        await self._nodes.leave_local_node()
 
     async def sync(self, node):
         """
@@ -740,6 +740,7 @@ class Cluster(object):
             result = await waiter
         except asyncio.TimeoutError:
             LOG.debug("Timeout waiting for ACK %d", next_seq)
+            # TODO: send nack
             # await self._forward_indirect_probe_timeout(msg)
         else:
             await self._forward_indirect_probe_result(msg)
@@ -780,5 +781,6 @@ class Cluster(object):
         LOG.debug("Forwarding NACK (%d) to %s", msg.seq, msg.node)
         await self._send_udp_message(msg.sender_addr.address, msg.sender_addr.port, ack)
 
+    # noinspection PyUnusedLocal
     async def _handle_user_message(self, msg, client):
         LOG.trace("Handling USER message (%d bytes) sender=%s", len(msg.data), msg.sender)

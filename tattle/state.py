@@ -125,11 +125,11 @@ class NodeManager(collections.Sequence, collections.Mapping):
         self.config = config
         self._queue = queue
         self._loop = loop or asyncio.get_event_loop()
+        self._leaving = False
         self._nodes = list()
         self._nodes_map = dict()
         self._nodes_lock = asyncio.Lock()
         self._suspect_nodes = dict()
-        self._suspect_nodes_lock = asyncio.Lock()
         self._local_node_name = None
         self._local_node_seq = sequence.Sequence()
 
@@ -157,9 +157,6 @@ class NodeManager(collections.Sequence, collections.Mapping):
         return self._nodes_map[self._local_node_name]
 
     async def set_local_node(self, local_node_name, local_node_host, local_node_port):
-        """
-        Set the local node as alive
-        """
         assert self._local_node_name is None
         self._local_node_name = local_node_name
 
@@ -168,6 +165,13 @@ class NodeManager(collections.Sequence, collections.Mapping):
 
         # signal node is alive
         await self.on_node_alive(local_node_name, incarnation, local_node_host, local_node_port, bootstrap=True)
+
+    async def leave_local_node(self):
+        assert self._local_node_name is not None
+        self._leaving = True
+
+        # signal node is dead
+        await self.on_node_dead(self.local_node.name, self.local_node.incarnation)
 
     async def on_node_alive(self, name, incarnation, host, port, bootstrap=False):
         """
@@ -183,13 +187,6 @@ class NodeManager(collections.Sequence, collections.Mapping):
 
         # acquire node lock
         with (await self._nodes_lock):
-
-            # It is possible that during a leave(), there is already an aliveMsg
-            # in-queue to be processed but blocked by the locks above. If we let
-            # that aliveMsg process, it'll cause us to re-join the cluster. This
-            # ensures that we don't.
-            # if self._leaving and new_state.name == self._local_node_name:
-            #     return
 
             # check if this is a new node
             current_node = self._nodes_map.get(name)
@@ -235,6 +232,11 @@ class NodeManager(collections.Sequence, collections.Mapping):
             if current_node.status == NODE_STATUS_SUSPECT:
                 await self._cancel_suspect_node(current_node)
 
+            # It is possible that during a leave, there is already an alive message in in the queue.
+            # If that happens ignore it so we don't rejoin the cluster.
+            if is_local_node and self._leaving:
+                return
+
             # update the current node status and incarnation number
             current_node.incarnation = incarnation
             current_node.status = NODE_STATUS_ALIVE
@@ -250,7 +252,7 @@ class NodeManager(collections.Sequence, collections.Mapping):
 
         :param name:
         :param incarnation:
-        :return:
+        :return: None
         """
 
         # acquire node lock
@@ -274,7 +276,7 @@ class NodeManager(collections.Sequence, collections.Mapping):
                 return
 
             # if this is about the local node, we need to refute. otherwise broadcast it
-            if current_node is self.local_node:
+            if current_node is self.local_node and not self._leaving:
                 LOG.debug("Refuting DEAD message (incarnation=%d)", incarnation)
                 self._refute()
                 return
@@ -345,7 +347,6 @@ class NodeManager(collections.Sequence, collections.Mapping):
             LOG.warn("Node suspect: %s (incarnation %d)", name, incarnation)
 
     async def _confirm_suspect_node(self, node):
-
         pass
 
     async def _create_suspect_node(self, node):
@@ -354,48 +355,45 @@ class NodeManager(collections.Sequence, collections.Mapping):
             LOG.debug("Suspect timer expired for %s", node.name)
             await self.on_node_dead(node.name, node.incarnation)
 
-        with (await self._suspect_nodes_lock):
-            # ignore if pending timer exists
-            if node.name in self._suspect_nodes:
-                return
+        # ignore if pending timer exists
+        if node.name in self._suspect_nodes:
+            return
 
-            n = len(self._nodes)
-            k = _calculate_expected_confirmations(n, self.config.suspicion_min_timeout_multi)
-            interval = self.config.probe_interval / 1000  # convert interval to seconds
-            min_timeout = self.config.suspicion_min_timeout_multi * _calculate_suspicion_timeout(n, interval)
-            max_timeout = self.config.suspicion_max_timeout_multi * min_timeout
+        n = len(self._nodes)
+        k = _calculate_expected_confirmations(n, self.config.suspicion_min_timeout_multi)
+        interval = self.config.probe_interval / 1000  # convert interval to seconds
+        min_timeout = self.config.suspicion_min_timeout_multi * _calculate_suspicion_timeout(n, interval)
+        max_timeout = self.config.suspicion_max_timeout_multi * min_timeout
 
-            if k < 1:
-                timeout = max_timeout
-            else:
-                timeout = min_timeout
+        if k < 1:
+            timeout = max_timeout
+        else:
+            timeout = min_timeout
 
-            LOG.debug("Starting suspicion timer: timeout=%0.4f k=%d min=%0.4f max=%0.4f",
-                      timeout,
-                      k,
-                      min_timeout,
-                      max_timeout)
+        # create a Timer
+        timer_ = timer.Timer(_handle_suspect_timer, timeout, self._loop)
 
-            # add node to suspects
-            self._suspect_nodes[node.name] = SuspectNode(timer.Timer(_handle_suspect_timer, timeout, self._loop),
-                                                         k,
-                                                         min_timeout,
-                                                         max_timeout,
-                                                         dict())
-            self._suspect_nodes[node.name].timer.start()
+        LOG.debug("Starting suspicion timer: timeout=%0.4f k=%d min=%0.4f max=%0.4f",
+                  timeout,
+                  k,
+                  min_timeout,
+                  max_timeout)
 
-            LOG.debug("Created suspect node: %s", node.name)
+        # add node to suspects
+        self._suspect_nodes[node.name] = SuspectNode(timer_, k, min_timeout, max_timeout, dict())
+        timer_.start()
+
+        LOG.debug("Created suspect node: %s", node.name)
 
     async def _cancel_suspect_node(self, node):
-        with (await self._suspect_nodes_lock):
-            # stop suspect Timer
-            suspect = self._suspect_nodes[node.name]
-            suspect.timer.stop()
+        # stop suspect Timer
+        suspect = self._suspect_nodes[node.name]
+        suspect.timer.stop()
 
-            # remove node from suspects
-            del self._suspect_nodes[node.name]
+        # remove node from suspects
+        del self._suspect_nodes[node.name]
 
-            LOG.debug("Canceled suspect node: %s", node.name)
+        LOG.debug("Canceled suspect node: %s", node.name)
 
     def _send_broadcast(self, node, msg):
         self._queue.push(node.name, messages.MessageEncoder.encode(msg))
