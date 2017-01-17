@@ -316,10 +316,6 @@ class AliveMessage(Message):
         return "<%s %s>" % (self.__class__.__name__, self.node)
 
 
-class RefuteMessage(Message):
-    pass
-
-
 class RemoteNodeState(BaseMessage):
     _fields_ = [
         "node",
