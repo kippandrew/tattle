@@ -6,8 +6,6 @@ import sys
 
 import msgpack
 
-# import six
-
 HEADER_LENGTH = 9  # 4 for length, 1 for flags, 4 crc
 HEADER_FORMAT = '!IBL'
 
@@ -231,6 +229,7 @@ class PingMessage(Message):
     def __init__(self, seq, target, sender=None, sender_addr=None):
         """
         Create new instance of the PingMessage class
+
         :param seq: sequence number
         :param target: target node name
         :param sender: sender node name
@@ -254,6 +253,7 @@ class PingRequestMessage(Message):
     def __init__(self, seq, target, target_addr, sender=None, sender_addr=None):
         """
         Create new instance of the PingRequestMessage class
+
         :param seq: sequence number
         :param target: target node name
         :param target_addr: target node address
@@ -324,8 +324,8 @@ class RemoteNodeState(BaseMessage):
         "status",
     ]
 
-    def __init__(self, node, node_addr, incarnation, status):
-        super(RemoteNodeState, self).__init__(node, node_addr, incarnation, status)
+    def __init__(self, node, addr, incarnation, status):
+        super(RemoteNodeState, self).__init__(node, addr, incarnation, status)
 
 
 class SyncMessage(Message):
@@ -335,3 +335,19 @@ class SyncMessage(Message):
 
     def __init__(self, remote_state):
         super(SyncMessage, self).__init__(remote_state)
+
+
+class UserMessage(Message):
+    _fields_ = [
+        "data"
+        "sender"
+    ]
+
+    def __init__(self, data, sender):
+        """
+        Create a new instance of the UserMessage class
+
+        :param data: user message
+        :param sender: sender node name
+        """
+        super(UserMessage, self).__init__(data, sender)

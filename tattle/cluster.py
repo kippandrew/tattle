@@ -71,7 +71,7 @@ class Cluster(object):
         return tcp_listener
 
     def _init_queue(self):
-        return queue.MessageQueue()
+        return queue.BroadcastQueue()
 
     def _init_state(self):
         return state.NodeManager(self.config, self._queue, loop=self._loop)
@@ -176,13 +176,15 @@ class Cluster(object):
         else:
             await self._probe_node(target_node)
 
-    async def send(self):
+    async def send(self, data):
         """
         Send an user message.
 
         :return: None
         """
-        pass
+        msg = messages.UserMessage(data, self.local_node_name)
+        self._queue.push(None, self._encode_message(msg))
+        LOG.debug("Queued message: %s", msg)
 
     @property
     def members(self):
@@ -449,7 +451,7 @@ class Cluster(object):
         local_state = []
         for node in self._nodes:
             local_state.append(messages.RemoteNodeState(node=node.name,
-                                                        node_addr=messages.InternetAddress(node.host, node.port),
+                                                        addr=messages.InternetAddress(node.host, node.port),
                                                         incarnation=node.incarnation,
                                                         status=node.status))
 
@@ -547,10 +549,6 @@ class Cluster(object):
         data = messages.MessageEncoder.encode(msg)
         LOG.trace("Encoded message: %s (%d bytes)", msg, len(data))
         return data
-
-    def _queue_message(self, msg):
-        self._queue.push(msg.node, self._encode_message(msg))
-        LOG.debug("Queued message: %s", msg)
 
     async def _send_udp_message(self, host, port, msg):
         LOG.trace("Sending %s to %s:%d", msg, host, port)
@@ -658,32 +656,28 @@ class Cluster(object):
             LOG.exception("Error handling UDP data")
             return
 
-    async def _handle_udp_message(self, message, client):
+    # noinspection PyTypeChecker
+    async def _handle_udp_message(self, msg, client):
         LOG.trace("Handling UDP message from %s:%d", *client)
         try:
-            if isinstance(message, messages.AliveMessage):
-                # noinspection PyTypeChecker
-                await self._handle_alive_message(message, client)
-            elif isinstance(message, messages.SuspectMessage):
-                # noinspection PyTypeChecker
-                await self._handle_suspect_message(message, client)
-            elif isinstance(message, messages.DeadMessage):
-                # noinspection PyTypeChecker
-                await self._handle_dead_message(message, client)
-            elif isinstance(message, messages.PingMessage):
-                # noinspection PyTypeChecker
-                await self._handle_ping_message(message, client)
-            elif isinstance(message, messages.PingRequestMessage):
-                # noinspection PyTypeChecker
-                await self._handle_ping_request_message(message, client)
-            elif isinstance(message, messages.AckMessage):
-                # noinspection PyTypeChecker
-                await self._handle_ack_message(message, client)
-            elif isinstance(message, messages.NackMessage):
-                # noinspection PyTypeChecker
-                await self._handle_nack_message(message, client)
+            if isinstance(msg, messages.AliveMessage):
+                await self._handle_alive_message(msg, client)
+            elif isinstance(msg, messages.SuspectMessage):
+                await self._handle_suspect_message(msg, client)
+            elif isinstance(msg, messages.DeadMessage):
+                await self._handle_dead_message(msg, client)
+            elif isinstance(msg, messages.PingMessage):
+                await self._handle_ping_message(msg, client)
+            elif isinstance(msg, messages.PingRequestMessage):
+                await self._handle_ping_request_message(msg, client)
+            elif isinstance(msg, messages.AckMessage):
+                await self._handle_ack_message(msg, client)
+            elif isinstance(msg, messages.NackMessage):
+                await self._handle_nack_message(msg, client)
+            elif isinstance(msg, messages.UserMessage):
+                await self._handle_user_message(msg, client)
             else:
-                LOG.warn("Unknown message type: %r", message.__class__)
+                LOG.warn("Unknown message type: %r", msg.__class__)
                 return
         except:
             LOG.exception("Error dispatching UDP message")
@@ -785,3 +779,6 @@ class Cluster(object):
         ack = messages.NackMessage(msg.seq, sender=self.local_node_name)
         LOG.debug("Forwarding NACK (%d) to %s", msg.seq, msg.node)
         await self._send_udp_message(msg.sender_addr.address, msg.sender_addr.port, ack)
+
+    async def _handle_user_message(self, msg, client):
+        LOG.trace("Handling USER message (%d bytes) sender=%s", len(msg.data), msg.sender)
