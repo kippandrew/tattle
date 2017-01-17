@@ -14,6 +14,7 @@ __all__ = [
     'NODE_STATUS_ALIVE',
     'NODE_STATUS_DEAD',
     'NODE_STATUS_SUSPECT',
+    'select_random_nodes'
 ]
 
 NODE_STATUS_ALIVE = 'ALIVE'
@@ -59,6 +60,27 @@ def _calculate_expected_confirmations(n, multi):
     if n - 2 < k:
         k = 0
     return k
+
+
+def select_random_nodes(k, nodes, predicate=None):
+    selected = []
+
+    k = min(k, len(nodes))
+    c = 0
+
+    while len(selected) < k and c <= (3 * len(nodes)):
+        c += 1
+        node = random.choice(nodes)
+        if node in selected:
+            continue
+
+        if predicate is not None:
+            if not predicate(node):
+                continue
+
+        selected.append(node)
+
+    return selected
 
 
 class Node(object):
@@ -404,24 +426,3 @@ class NodeManager(collections.Sequence, collections.Mapping):
 
         # broadcast alive message
         self._broadcast_alive(self.local_node)
-
-
-def select_random_nodes(k, nodes, predicate=None):
-    selected = []
-
-    k = min(k, len(nodes))
-    c = 0
-
-    while len(selected) < k and c <= (3 * len(nodes)):
-        c += 1
-        node = random.choice(nodes)
-        if node in selected:
-            continue
-
-        if predicate is not None:
-            if not predicate(node):
-                continue
-
-        selected.append(node)
-
-    return selected

@@ -6,6 +6,7 @@ import math
 import struct
 import time
 
+from tattle import config
 from tattle import logging
 from tattle import messages
 from tattle import network
@@ -30,20 +31,14 @@ def _calculate_transmit_limit(n, m):
 
 
 class Cluster(object):
-    def __init__(self, config, loop=None):
+    def __init__(self, config: config.Configuration, loop=None):
         """
         Create a new instance of the Cluster class
-        :param config:
-        :type config: tattle.config.Configuration
         """
         self.config = config
-
         self._loop = loop or asyncio.get_event_loop()
-
         self._leaving = False
-
         self._ping_seq = sequence.Sequence()
-        self._node_seq = sequence.Sequence()
 
         # init listeners
         self._udp_listener = self._init_listener_udp()
@@ -89,37 +84,11 @@ class Cluster(object):
     def _init_sync(self):
         self._sync_schedule = schedule.ScheduledCallback(self._do_sync, self.config.sync_interval, loop=self._loop)
 
-    @property
-    def local_node_address(self):
-        if self.config.node_address is not None:
-            return self.config.node_address
-        else:
-            if self.config.bind_address is not None:
-                if self.config.bind_address == '0.0.0.0':
-                    # TODO: enumerate interfaces to get ip address
-                    raise NotImplementedError()
-                else:
-                    return self.config.bind_address
-            else:
-                return self._udp_listener.local_address
-
-    @property
-    def local_node_port(self):
-        if self.config.node_port is not None:
-            return self.config.node_port
-        else:
-            if self.config.bind_port is not None:
-                return self.config.bind_port
-            else:
-                return self._udp_listener.local_port
-
-    @property
-    def local_node_name(self):
-        return self.config.node_name
-
     async def start(self):
         """
-        Start cluster on this node.
+        Start the cluster on this node.
+
+        :return: None
         """
         await self._udp_listener.start()
         LOG.debug("Started UDPListener. Listening on udp %s:%d",
@@ -144,7 +113,9 @@ class Cluster(object):
 
     async def stop(self):
         """
-        Shutdown this node. This will cause this node to appear dead to other nodes.
+        Shutdown the cluster on this node. This will cause this node to appear dead to other nodes.
+
+        :return: None
         """
         await self._probe_schedule.stop()
         await self._sync_schedule.stop()
@@ -153,47 +124,109 @@ class Cluster(object):
 
         LOG.info("Node stopped")
 
-    async def join(self, *other_nodes):
+    async def join(self, *node_address):
         """
         Join a cluster.
-        :return:
+
+        :return: None
         """
 
         # gather list of nodes to sync
-        LOG.trace("Attempting to join nodes: %s", other_nodes)
+        LOG.trace("Attempting to join nodes: %s", node_address)
 
         # sync nodes
         tasks = []
-        for node_host, node_port in other_nodes:
+        for node_host, node_port in node_address:
             tasks.append(self._sync_node(node_host, node_port))
 
         # wait for syncs to complete
         results = await asyncio.gather(*tasks, loop=self._loop, return_exceptions=True)
-
         successful_nodes, failed_nodes = utilities.partition(lambda r: r is True, results)
         LOG.debug("Successfully synced %d nodes (%d failed)", len(successful_nodes), len(failed_nodes))
 
     async def leave(self):
         """
-        Leave a cluster.
+        Leave the cluster.
+
         :return:
         """
-        pass
+        raise NotImplementedError()
 
     async def sync(self, node):
         """
         Sync this node with another node.
-        :param node:
+
+        :param node: node name
         :return:
         """
-        pass
+        target_node = self._nodes.get(node)
+        await self._sync_node(target_node.host, target_node.port)
 
-    async def ping(self, node):
+    async def ping(self, node, indirect=False):
+        """
+        Ping a node.
+
+        :param node: node name
+        :param indirect:
+        :return: None
+        """
+        target_node = self._nodes.get(node)
+        if indirect:
+            await self._probe_node_indirect(target_node, self.config.probe_indirect_nodes)
+        else:
+            await self._probe_node(target_node)
+
+    async def send(self):
+        """
+        Send an user message.
+
+        :return: None
+        """
         pass
 
     @property
     def members(self):
+        """
+        Return the nodes in the cluster
+        """
         return sorted(self._nodes, key=lambda n: n.name)
+
+    @property
+    def local_node_address(self):
+        """
+        Return the local node's address
+        """
+        if self.config.node_address is not None:
+            return self.config.node_address
+        else:
+            if self.config.bind_address is not None:
+                if self.config.bind_address == '0.0.0.0':
+                    # TODO: enumerate interfaces to get ip address
+                    raise NotImplementedError()
+                else:
+                    return self.config.bind_address
+            else:
+                return self._udp_listener.local_address
+
+    @property
+    def local_node_port(self):
+        """
+        Return the local node's port
+        """
+        if self.config.node_port is not None:
+            return self.config.node_port
+        else:
+            if self.config.bind_port is not None:
+                return self.config.bind_port
+            else:
+                return self._udp_listener.local_port
+
+    @property
+    def local_node_name(self):
+        """
+        Return the local node's name
+        """
+        return self.config.node_name
 
     async def _do_probe(self):
         """
@@ -265,12 +298,7 @@ class Cluster(object):
         except Exception:
             LOG.exception("Error running sync")
 
-    async def _probe_node(self, target_node):
-        """
-        Probe a node
-        :param target_node: node to probe
-        :type target_node: state.Node
-        """
+    async def _probe_node(self, target_node: state.Node):
         if target_node.name == self.local_node_name:
             return
 
@@ -297,27 +325,28 @@ class Cluster(object):
         else:
             await self._handle_probe_result(target_node, result)
 
-    async def _handle_probe_result(self, node, result):
+    async def _handle_probe_result(self, node: state.Node, result: bool):
         if result:
             LOG.debug("Probe successful for node: %s result=%s", node.name, result)
 
-            # if node is suspect notify, then node is alive
+            # if node is suspect notify that node is alive
             if node.status == state.NODE_STATUS_SUSPECT:
                 LOG.warn("Suspect node is alive: %s", node.name)
 
                 await self._nodes.on_node_alive(node.name, node.incarnation, node.host, node.port)
 
         else:
+            # TODO: handle NACK
             LOG.debug("Probe failed for node: %s result=%s", node.name, result)
             raise NotImplementedError()
 
-    async def _handle_probe_timeout(self, node):
+    async def _handle_probe_timeout(self, node: state.Node):
         LOG.debug("Probe failed for node: %s", node.name)
 
         # notify node is suspect
         await self._nodes.on_node_suspect(node.name, node.incarnation)
 
-    async def _wait_for_probe(self, seq):
+    async def _wait_for_probe(self, seq: int) -> bool:
 
         # start a timer
         start_time = time.time()
@@ -345,12 +374,7 @@ class Cluster(object):
 
         return result
 
-    async def _probe_node_indirect(self, target_node, k):
-        """
-        Probe a node indirectly
-        :param target_node: node to probe
-        :type target_node: state.Node
-        """
+    async def _probe_node_indirect(self, target_node: state.Node, k: int):
 
         def _find_nodes(n):
             return n.name != target_node.name and n.name != self.local_node_name and n.status == state.NODE_STATUS_ALIVE
@@ -366,7 +390,7 @@ class Cluster(object):
         except:
             LOG.exception("Error probing nodes")
 
-    async def _probe_node_indirect_via(self, target_node, indirect_node):
+    async def _probe_node_indirect_via(self, target_node: state.Node, indirect_node: state.Node):
         LOG.debug("Probing node: %s indirectly via %s", target_node.name, indirect_node.name)
 
         # get a sequence number for the ping
