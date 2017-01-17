@@ -120,7 +120,7 @@ class NodeManager(collections.Sequence, collections.Mapping):
         :param config:
         :param queue:
         :type config: tattle.config.Configuration
-        :type queue tattle.queue.MessageQueue
+        :type queue tattle.queue.BroadcastQueue
         """
         self.config = config
         self._queue = queue

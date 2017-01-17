@@ -1,21 +1,20 @@
 from tattle import logging
 
 __all__ = [
-    'MessageQueue',
-    '_MessageQueueItem'
+    'BroadcastQueue',
 ]
 
 LOG = logging.get_logger(__name__)
 
 
-class _MessageQueueItem(object):
+class BroadcastQueueItem(object):
     def __init__(self, node, message, transmits=0):
         self.node = node
         self.message = message
         self.transmits = transmits
 
 
-class MessageQueue():
+class BroadcastQueue():
     def __init__(self, max_size=0):
         self._max_size = max_size
         self._queue = list()
@@ -24,7 +23,7 @@ class MessageQueue():
         return len(self._queue)
 
     def push(self, node, message):
-        self._push_item(_MessageQueueItem(node, message))
+        self._push_item(BroadcastQueueItem(node, message))
 
     def _push_item(self, item):
 

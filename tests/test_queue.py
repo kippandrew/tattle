@@ -5,7 +5,7 @@ from tattle import queue
 
 class MessageQueueTestCase(unittest.TestCase):
     def test_push(self):
-        q = queue.MessageQueue()
+        q = queue.BroadcastQueue()
 
         q.push('node1', b'node1 message')
         q.push('node2', b'node2 message')
@@ -18,7 +18,7 @@ class MessageQueueTestCase(unittest.TestCase):
         self.assertEqual(len(q), 3)
 
     def test_pop(self):
-        q = queue.MessageQueue()
+        q = queue.BroadcastQueue()
         q.push('node1', b'node1 message')
         q.push('node2', b'node2 message')
         q.push('node1', b'node1 updated')
@@ -45,7 +45,7 @@ class MessageQueueTestCase(unittest.TestCase):
 
     def test_fetch(self):
 
-        q = queue.MessageQueue()
+        q = queue.BroadcastQueue()
         q.push('node1', b'node1 message')
         q.push('node2', b'node2 message')
         q.push('node1', b'node1 updated')
