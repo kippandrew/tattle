@@ -1,8 +1,10 @@
 import asyncio
+import ipaddress
 import socket
 
 import asyncstream
 import asyncstream.factory
+import netifaces
 
 from tattle import logging
 
@@ -307,3 +309,18 @@ def make_address(host, port, protocol=None):
         if protocol is not None:
             address = protocol.lower() + "://" + address
     return address
+
+
+def default_ip_address():
+    """
+    Return the IP address of the first interface with a real IP addresses
+    """
+    devices = netifaces.interfaces()
+    for device in devices:
+        addresses = netifaces.ifaddresses(device)
+        if netifaces.AF_INET in addresses:
+            for addr in addresses[netifaces.AF_INET]:
+                ip_addr = ipaddress.ip_address(addr['addr'])
+                if not ip_addr.is_loopback and (ip_addr.is_global or ip_addr.is_private):
+                    return str(ip_addr)
+    return None

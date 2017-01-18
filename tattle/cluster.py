@@ -203,8 +203,10 @@ class Cluster(object):
         else:
             if self.config.bind_address is not None:
                 if self.config.bind_address == '0.0.0.0':
-                    # TODO: enumerate interfaces to get ip address
-                    raise NotImplementedError()
+                    default_ip_address = network.default_ip_address()
+                    if default_ip_address is None:
+                        raise RuntimeError("Unable to determine default IP address")
+                    return default_ip_address
                 else:
                     return self.config.bind_address
             else:
@@ -229,6 +231,25 @@ class Cluster(object):
         Return the local node's name
         """
         return self.config.node_name
+
+    async def _do_sync(self):
+        """
+        Handle the sync_schedule periodic callback
+        """
+
+        def _find_nodes(n):
+            return n.name != self.local_node_name and n.status != state.NODE_STATUS_DEAD
+
+        sync_node = next(iter(state.select_random_nodes(self.config.sync_nodes, self._nodes, _find_nodes)), None)
+        if sync_node is None:
+            return
+
+        LOG.debug("Syncing node: %s", sync_node)
+
+        try:
+            await self._sync_node(sync_node.host, sync_node.port)
+        except Exception:
+            LOG.exception("Error running sync")
 
     async def _do_probe(self):
         """
@@ -267,42 +288,14 @@ class Cluster(object):
         if node is None:
             return
 
-        LOG.debug("Probing node: %s", node)
-
         try:
             # send ping messages
             self._loop.create_task(self._probe_node(node))
         except Exception:
             LOG.exception("Error running probe")
 
-        try:
-            # send indirect ping messages
-            self._loop.create_task(self._probe_node_indirect(node, self.config.probe_indirect_nodes))
-        except Exception:
-            LOG.exception("Error running indirect probe")
-
-    async def _do_sync(self):
-        """
-        Handle the sync_schedule periodic callback
-        """
-
-        def _find_nodes(n):
-            return n.name != self.local_node_name and n.status != state.NODE_STATUS_DEAD
-
-        sync_node = next(iter(state.select_random_nodes(self.config.sync_nodes, self._nodes, _find_nodes)), None)
-        if sync_node is None:
-            return
-
-        LOG.debug("Syncing node: %s", sync_node)
-
-        try:
-            await self._sync_node(sync_node.host, sync_node.port)
-        except Exception:
-            LOG.exception("Error running sync")
-
     async def _probe_node(self, target_node: state.Node):
-        if target_node.name == self.local_node_name:
-            return
+        LOG.debug("Probing node: %s", target_node)
 
         # get a sequence number for the ping
         next_seq = self._ping_seq.increment()
@@ -320,12 +313,23 @@ class Cluster(object):
         await self._send_udp_message(target_node.host, target_node.port, ping)
 
         # wait for probe result or timeout
+        result = False
         try:
             result = await waiter
         except asyncio.TimeoutError:
             await self._handle_probe_timeout(target_node)
         else:
             await self._handle_probe_result(target_node, result)
+
+        # if probe was successful no need to send indirect probe
+        if result:
+            return
+
+        # if probe failed, send indirect probe
+        try:
+            result = await self._probe_node_indirect(target_node, self.config.probe_indirect_nodes)
+        except Exception:
+            LOG.exception("Error running indirect probe")
 
     async def _handle_probe_result(self, node: state.Node, result: bool):
         if result:
@@ -463,9 +467,6 @@ class Cluster(object):
     async def _sync_node(self, node_host, node_port):
         """
         Sync with remote node
-        :param node_host:
-        :param node_port:
-        :return:
         """
         connection = None
         try:
@@ -521,10 +522,7 @@ class Cluster(object):
 
     def _read_udp_message(self, stream):
         """
-        Read a message from a stream synchronously
-        :type stream: io.BufferedReader
-        :return: buffer read or None
-        :rtype: bytes
+        Read a message from a UDP stream synchronously
         """
         buf = bytes()
         buf += stream.read(messages.HEADER_LENGTH)
