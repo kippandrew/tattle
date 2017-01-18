@@ -21,8 +21,6 @@ class NodeThread(threading.Thread):
         self.api = None
         self.server = None
         self.handler = None
-
-        # self.join_nodes = join_nodes or []
         self.future = loop.create_future()
         super().__init__(name=node.local_node_name, daemon=True)
 
