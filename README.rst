@@ -18,7 +18,7 @@ Example Code (node.py)::
     import tattle
 
     async def run_node():
-        config = tattle.DefaultConfiguration(bind_port=port)
+        config = tattle.Configuration(bind_port=port)
         node = tattle.Cluster(config)
         await node.start()
         if join is not None:

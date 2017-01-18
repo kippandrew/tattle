@@ -25,7 +25,7 @@ class AbstractIntegrationTest(testing.AsyncTestCase):
         return self._run_with_context(self.contexts[node.config.node_name], func, *args, **kwargs)
 
     def configure_node(self):
-        cfg = tattle.DefaultConfiguration()
+        cfg = tattle.Configuration()
         cfg.node_name = 'node-%d' % self.last_node
         cfg.bind_port = 7900 + self.last_node
         self.last_node += 1

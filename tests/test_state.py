@@ -12,7 +12,7 @@ class NodeManagerTestCase(asynctest.TestCase):
     async def setUp(self):
         super(NodeManagerTestCase, self).setUp()
         self.queue = unittest.mock.Mock()
-        self.nodes = state.NodeManager(config.DefaultConfiguration(), self.queue, self.loop)
+        self.nodes = state.NodeManager(config.Configuration(), self.queue, self.loop)
 
         # create a local node
         await self.nodes.set_local_node('local-node', '127.0.0.1', 7800)

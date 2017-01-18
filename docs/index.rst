@@ -11,6 +11,7 @@ Welcome to tattle's documentation!
    :caption: Contents:
 
    protocol
+   config
    tattle
 
 

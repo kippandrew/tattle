@@ -367,7 +367,7 @@ class NodeManager(collections.Sequence, collections.Mapping):
 
         n = len(self._nodes)
         k = _calculate_expected_confirmations(n, self.config.suspicion_min_timeout_multi)
-        interval = self.config.probe_interval / 1000  # convert interval to seconds
+        interval = self.config.probe_interval
         min_timeout = self.config.suspicion_min_timeout_multi * _calculate_suspicion_timeout(n, interval)
         max_timeout = self.config.suspicion_max_timeout_multi * min_timeout
 

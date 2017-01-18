@@ -362,7 +362,7 @@ class Cluster(object):
         try:
             # wait for timeout
             LOG.trace("Waiting for probe (seq=%d)", seq)
-            result = await asyncio.wait_for(future, timeout=self.config.probe_timeout / 1000, loop=self._loop)
+            result = await asyncio.wait_for(future, timeout=self.config.probe_timeout, loop=self._loop)
         except asyncio.TimeoutError:
             end_time = time.time()
             LOG.trace("Timeout waiting for probe (seq=%d) elapsed time: %0.2f", seq, end_time - start_time)
@@ -559,7 +559,7 @@ class Cluster(object):
 
         # max_messages = len(self._nodes)
         max_transmits = _calculate_transmit_limit(len(self._nodes), self.config.retransmit_multi)
-        max_bytes = 1024 - len(buf)
+        max_bytes = 512 - len(buf)
 
         # gather gossip messages (already encoded)
         gossip = self._queue.fetch(max_transmits, max_bytes)
@@ -784,3 +784,5 @@ class Cluster(object):
     # noinspection PyUnusedLocal
     async def _handle_user_message(self, msg, client):
         LOG.trace("Handling USER message (%d bytes) sender=%s", len(msg.data), msg.sender)
+
+        # self._queue.

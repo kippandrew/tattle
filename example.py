@@ -105,7 +105,7 @@ def wait_until_converged(expected_nodes=None):
 
 def configure_node():
     global last_node
-    cfg = tattle.DefaultConfiguration()
+    cfg = tattle.Configuration()
     cfg.node_name = 'node-%d' % last_node
     cfg.bind_port = 7900 + last_node
     cfg.api_port = 7800 + last_node

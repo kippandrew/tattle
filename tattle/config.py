@@ -6,44 +6,83 @@ def _default_node_name():
 
 
 class Configuration(object):
-    def __init__(self):
-        self.node_name = None
-        self.node_address = None
-        self.node_port = None
-        self.bind_address = None
-        self.bind_port = None
-        self.api_address = None
-        self.api_port = None
-        self.retransmit_multi = None
-        self.probe_interval = None
-        self.probe_timeout = None
-        self.probe_indirect_nodes = None
-        self.sync_interval = None
-        self.sync_nodes = None
-        self.suspicion_min_timeout_multi = None
-        self.suspicion_max_timeout_multi = None
+    def __init__(self, **settings):
+        """
+        Initialize instance of Configuration class
+        """
 
+        self.node_name = _default_node_name()
+        """
+        Name of node. Should be unique within the cluster.
+        """
 
-class DefaultConfiguration(Configuration):
-    def __init__(self):
-        super(DefaultConfiguration, self).__init__()
+        self.bind_address = '0.0.0.0'
+        """
+        Node listening address.
+        """
 
-        self.bind_address = '127.0.0.1'
         self.bind_port = 7900
+        """
+        Node listening port.
+        """
+
+        self.node_address = None
+        """
+        Address that will advertised to other nodes. Useful for NAT.
+        """
+
+        self.node_port = None
+        """
+        Port that will advertised to other nodes. Useful for NAT.
+        """
+
         self.api_address = '127.0.0.1'
+        """
+        API listening address.
+        """
+
         self.api_port = 7800
+        """
+        API listening port.
+        """
+
         self.retransmit_multi = 3
-        self.probe_interval = 100
-        self.probe_timeout = 50
+        """
+        Multiplier for the number of retransmissions of a gossip message.
+        The number of retransmits is calculated as retransmit_multi * log(N+1), where N is the number of nodes
+        in the cluster.
+        """
+
+        self.probe_interval = 0.1
+        """
+        Probe interval in seconds.
+        """
+
+        self.probe_timeout = 0.5
+        """
+        Probe timeout in seconds.
+        """
+
         self.probe_indirect_nodes = 3
-        self.sync_interval = 10000
+        """
+        Number of nodes to send indirect probes.
+        """
+
+        self.sync_interval = 10
+        """
+        Sync interval in seconds.
+        """
+
         self.sync_nodes = 1
+        """
+        Number of nodes to sync.
+        """
+
         self.suspicion_min_timeout_multi = 5
         self.suspicion_max_timeout_multi = 6
 
-        if self.node_name is None:
-            self.node_name = _default_node_name()
+        self.__dict__.update(**settings)
 
 
 def init_config():
-    return DefaultConfiguration()
+    return Configuration()

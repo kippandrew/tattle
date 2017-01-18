@@ -1,0 +1,1 @@
+.. autoclass:: tattle.config.Configuration
