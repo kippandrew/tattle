@@ -46,3 +46,6 @@ nosetests-docker.logs
 
 # environment variables
 .env
+
+# Sphinx docs
+docs/_build/

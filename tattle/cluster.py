@@ -148,7 +148,7 @@ class Cluster(object):
         """
         Leave the cluster.
 
-        :return:
+        :return: None
         """
         await self._nodes.leave_local_node()
 
