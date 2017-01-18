@@ -11,8 +11,15 @@ Welcome to tattle's documentation!
    :caption: Contents:
 
    protocol
-   config
-   tattle
+   package
+
+
+Installing
+==========
+
+Installing with pip::
+
+  pip install tattle
 
 
 Indices and tables
