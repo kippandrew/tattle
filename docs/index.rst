@@ -10,6 +10,7 @@ Welcome to tattle's documentation!
    :maxdepth: 2
    :caption: Contents:
 
+   protocol
    tattle
 
 
