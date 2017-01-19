@@ -385,12 +385,14 @@ class RemoteNodeState(_BaseMessage):
     _fields_ = [
         "node",
         ("addr", InternetAddress),
+        "version",
         "incarnation",
         "status",
+        "metadata",
     ]
 
-    def __init__(self, node, addr, incarnation, status):
-        super(RemoteNodeState, self).__init__(node, addr, incarnation, status)
+    def __init__(self, node, addr, version, incarnation, status, metadata):
+        super(RemoteNodeState, self).__init__(node, addr, version, incarnation, status, metadata)
 
 
 class SyncMessage(Message):

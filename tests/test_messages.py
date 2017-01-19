@@ -32,7 +32,7 @@ class MessagePackerTestCase(unittest.TestCase):
         self.assertEqual(orig, messages.MessageSerializer.decode(buf))
 
     def test_encode_list(self):
-        state = [messages.RemoteNodeState('test', messages.InternetAddress('127.0.0.0', 12345), 1, 'alive')]
+        state = [messages.RemoteNodeState('test', messages.InternetAddress('127.0.0.0', 12345), 1, 1, 'alive', None)]
         orig = messages.SyncMessage(remote_state=state)
         buf = messages.MessageSerializer.encode(orig)
         new = messages.MessageSerializer.decode(buf)

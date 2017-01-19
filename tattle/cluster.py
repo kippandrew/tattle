@@ -456,8 +456,10 @@ class Cluster(object):
         for node in self._nodes:
             local_state.append(messages.RemoteNodeState(node=node.name,
                                                         addr=messages.InternetAddress(node.host, node.port),
+                                                        version=node.version,
                                                         incarnation=node.incarnation,
-                                                        status=node.status))
+                                                        status=node.status,
+                                                        metadata=node.metadata))
 
         LOG.trace("Sending local state %s", local_state)
 
