@@ -9,6 +9,29 @@ import msgpack
 from tattle import crypto
 from tattle import logging
 
+__all__ = [
+    'MESSAGE_HEADER_LENGTH',
+    'MESSAGE_HEADER_FORMAT',
+    'MESSAGE_FLAG_ENCRYPT',
+    'Message',
+    'MessageError',
+    'MessageEncodeError',
+    'MessageDecodeError',
+    'MessageChecksumError',
+    'MessageSerializer',
+    'InternetAddress',
+    'PingMessage',
+    'PingRequestMessage',
+    'AckMessage',
+    'NackMessage',
+    'SuspectMessage',
+    'DeadMessage',
+    'AliveMessage',
+    'RemoteNodeState',
+    'SyncMessage',
+    'UserMessage',
+]
+
 LOG = logging.get_logger(__name__)
 
 MESSAGE_HEADER_LENGTH = 7  # 2 for length, 1 for flags, 4 for CRC32
@@ -164,12 +187,13 @@ class MessageSerializer(object):
             raise MessageChecksumError("Message checksum mismatch: 0x%X != 0x%X" % (crc, expected))
 
     @classmethod
-    def decode(cls, buf, encryption=None):
+    def decode(cls, buf, encryption=None) -> Message:
         """
         Decode a message from bytes
+
         :param buf:
-        :param encryption:
-        :return:
+        :param encryption: list of encryption keys
+        :return: deserialized message
         """
 
         # unpack message header
@@ -227,11 +251,12 @@ class MessageSerializer(object):
         return crc
 
     @classmethod
-    def encode(cls, msg, encryption=None):
+    def encode(cls, msg: Message, encryption=None) -> bytes:
         """
         Encode a message to bytes
+
         :param msg:
-        :param encryption:
+        :param encryption: encryption key
         :return:
         """
 

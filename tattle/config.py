@@ -1,7 +1,7 @@
 import socket
 
 
-def _default_node_name():
+def default_node_name():
     return socket.gethostname()
 
 
@@ -11,7 +11,7 @@ class Configuration(object):
         Initialize instance of Configuration class
         """
 
-        self.node_name = _default_node_name()
+        self.node_name = default_node_name()
         """
         Name of node. Should be unique within the cluster.
         """
