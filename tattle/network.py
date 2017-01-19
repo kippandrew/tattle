@@ -12,6 +12,8 @@ __all__ = [
     'TCPListener',
     'UDPConnection',
     'UDPListener',
+    'parse_address',
+    'default_ip_address',
 ]
 
 LOG = logging.get_logger(__name__)
@@ -300,15 +302,6 @@ def parse_address(address):
         host, _, port = address.partition(':')
         return host, int(port)
     return address, None
-
-
-def make_address(host, port, protocol=None):
-    address = host
-    if port is not None:
-        address = host + ":" + str(port)
-        if protocol is not None:
-            address = protocol.lower() + "://" + address
-    return address
 
 
 def default_ip_address():

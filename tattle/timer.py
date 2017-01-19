@@ -2,11 +2,11 @@ import asyncio
 
 from tattle import logging
 
-LOG = logging.get_logger(__name__)
-
 __all__ = [
     'Timer'
 ]
+
+LOG = logging.get_logger(__name__)
 
 
 class Timer(object):

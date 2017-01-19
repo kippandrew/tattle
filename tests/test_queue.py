@@ -3,7 +3,7 @@ import unittest
 from tattle import queue
 
 
-class MessageQueueTestCase(unittest.TestCase):
+class BroadcastQueueTestCase(unittest.TestCase):
     def test_push(self):
         q = queue.BroadcastQueue()
 

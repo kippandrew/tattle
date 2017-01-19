@@ -9,6 +9,13 @@ from cryptography.hazmat.primitives.ciphers import modes
 
 from tattle import logging
 
+__all__ = [
+    'DecryptError',
+    'validate_key',
+    'encrypt_data',
+    'decrypt_data',
+]
+
 LOG = logging.get_logger(__name__)
 
 VER_SIZE = 1

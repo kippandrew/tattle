@@ -3,6 +3,10 @@ import contextlib
 
 from tattle import logging
 
+__all__ = [
+    'ScheduledCallback',
+]
+
 LOG = logging.get_logger(__name__)
 
 
