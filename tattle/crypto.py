@@ -24,7 +24,24 @@ def _generate_nonce(length=IV_SIZE):
     return os.urandom(length)
 
 
+def validate_key(key):
+    if not isinstance(key, bytes):
+        raise TypeError("Encryption key should be bytes")
+    if len(key) != 16 and len(key) != 24 and len(key) != 32:
+        raise ValueError("Encryption key must be 120, 192, or 256 bits")
+
+
 def encrypt_data(data, key, version=0):
+    """
+    Encrypt data using the given key
+
+    :param data: data to encrypt
+    :param key: encryption key (should be 120, 192, 256 bits)
+    :param version: encryption payload version
+    :return: encrypted data (version + nonce + tag + cipher text)
+    """
+    validate_key(key)
+
     nonce = _generate_nonce()
 
     cipher = ciphers.Cipher(algorithms.AES(key), modes.GCM(nonce), backend=backends.default_backend())
@@ -39,6 +56,13 @@ def encrypt_data(data, key, version=0):
 
 
 def decrypt_data(raw, keys=None):
+    """
+    Decrypt data using the given keys
+
+    :param raw: data to decrypt
+    :param keys: list of encryption keys
+    :return:
+    """
     offset = 0
     version, = struct.unpack('>B', raw[0:VER_SIZE])
     offset += VER_SIZE
@@ -52,10 +76,12 @@ def decrypt_data(raw, keys=None):
     cipher_text = raw[offset:]
 
     for key in keys:
+        validate_key(key)
+
         cipher = ciphers.Cipher(algorithms.AES(key), modes.GCM(nonce, tag), backend=backends.default_backend())
 
         decryptor = cipher.decryptor()
-        
+
         try:
             plain_text = decryptor.update(cipher_text) + decryptor.finalize()
         except (exceptions.InvalidTag, exceptions.InvalidKey):

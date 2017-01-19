@@ -48,9 +48,8 @@ class Configuration(object):
 
         self.retransmit_multi = 3
         """
-        Multiplier for the number of retransmissions of a gossip message.
-        The number of retransmits is calculated as retransmit_multi * log(N+1), where N is the number of nodes
-        in the cluster.
+        Multiplier for the number of retransmissions of a gossip message. The number of retransmits is
+        calculated as retransmit_multi * log(N+1), where N is the number of nodes in the cluster.
         """
 
         self.probe_interval = 0.1
@@ -78,13 +77,13 @@ class Configuration(object):
         Number of nodes to sync.
         """
 
-        self.suspicion_min_timeout_multi = 5
-        self.suspicion_max_timeout_multi = 6
-
         self.encryption_key = None
         """
         Encryption key used for message encryption. Should be 128, 192, or 256 bits.
         """
+
+        self.suspicion_min_timeout_multi = 5
+        self.suspicion_max_timeout_multi = 6
 
         self.__dict__.update(**settings)
 
