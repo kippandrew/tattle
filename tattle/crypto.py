@@ -55,12 +55,12 @@ def decrypt_data(raw, keys=None):
         cipher = ciphers.Cipher(algorithms.AES(key), modes.GCM(nonce, tag), backend=backends.default_backend())
 
         decryptor = cipher.decryptor()
+        
         try:
-
             plain_text = decryptor.update(cipher_text) + decryptor.finalize()
         except (exceptions.InvalidTag, exceptions.InvalidKey):
             continue
 
         return plain_text
 
-    raise DecryptError()
+    raise DecryptError("Failed to decrypt data")

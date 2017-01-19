@@ -7,8 +7,11 @@ import sys
 import msgpack
 
 from tattle import crypto
+from tattle import logging
 
-MESSAGE_HEADER_LENGTH = 7  # 2 for length, 1 for flags, 4 crc
+LOG = logging.get_logger(__name__)
+
+MESSAGE_HEADER_LENGTH = 7  # 2 for length, 1 for flags, 4 for CRC32
 MESSAGE_HEADER_FORMAT = '!HBL'  # network byte order is B/E
 
 MESSAGE_FLAG_ENCRYPT = 0x80
@@ -30,7 +33,7 @@ class MessageChecksumError(MessageDecodeError):
     pass
 
 
-class BaseMessage(object):
+class _BaseMessage(object):
     _fields_ = []
 
     def __init__(self, *args, **kwargs):
@@ -89,7 +92,7 @@ class BaseMessage(object):
     def get_fields(cls):
         fields = []
         for base in reversed(inspect.getmro(cls)):
-            if issubclass(base, BaseMessage):
+            if issubclass(base, _BaseMessage):
                 # noinspection PyProtectedMember
                 for f in base._fields_:
                     if isinstance(f, tuple):
@@ -99,12 +102,16 @@ class BaseMessage(object):
         return fields
 
 
-class Message(BaseMessage):
+class Message(_BaseMessage):
     def __init__(self, *args, **kwargs):
         super(Message, self).__init__(*args, **kwargs)
 
 
-class MessageDecoder(object):
+class MessageSerializer(object):
+    """
+    Utility class for serializing and deserializing Messages
+    """
+
     @classmethod
     def _deserialize_internal(cls, data):
         # get message type
@@ -139,13 +146,12 @@ class MessageDecoder(object):
 
         # shenanigans to initialize Message without calling constructor
         message = message_type.__new__(message_type, *message_args)
-        BaseMessage.__init__(message, *message_args)
+        _BaseMessage.__init__(message, *message_args)
         return message
 
     @classmethod
     def _deserialize_message(cls, raw):
-        message = cls._deserialize_internal(msgpack.unpackb(raw, encoding='utf-8', use_list=True))
-        return message
+        return cls._deserialize_internal(msgpack.unpackb(raw, encoding='utf-8', use_list=True))
 
     @classmethod
     def _decrypt_message(cls, raw, keys):
@@ -159,11 +165,17 @@ class MessageDecoder(object):
 
     @classmethod
     def decode(cls, buf, encryption=None):
+        """
+        Decode a message from bytes
+        :param buf:
+        :param encryption:
+        :return:
+        """
 
         # unpack message header
         if len(buf) <= MESSAGE_HEADER_LENGTH:
             raise MessageDecodeError("Message is too short")
-        (length, flags, crc,) = struct.unpack(MESSAGE_HEADER_FORMAT, buf[0:MESSAGE_HEADER_LENGTH])
+        (length, flags, crc) = struct.unpack(MESSAGE_HEADER_FORMAT, buf[0:MESSAGE_HEADER_LENGTH])
 
         # unpack message body
         raw = buf[MESSAGE_HEADER_LENGTH:]
@@ -171,16 +183,15 @@ class MessageDecoder(object):
         # verify message checksum
         cls._verify_checksum(raw, crc)
 
+        # handle encryption
         if flags & MESSAGE_FLAG_ENCRYPT == MESSAGE_FLAG_ENCRYPT:
             raw = cls._decrypt_message(raw, keys=encryption)
 
         # return the deserialized message
         return cls._deserialize_message(raw)
 
-
-class MessageEncoder(object):
     @classmethod
-    def _serialize(cls, msg):
+    def _serialize_internal(cls, msg):
         # insert the name of the class
         data = [msg.__class__.__name__]
 
@@ -190,21 +201,21 @@ class MessageEncoder(object):
             attr = getattr(msg, field_name)
             if field_type is not None and attr is not None:
                 # if attr has a field type defined deserialize that field
-                data.extend(cls._serialize(attr))
+                data.extend(cls._serialize_internal(attr))
             else:
                 if isinstance(attr, str) or isinstance(attr, bytes):
                     data.append(attr)
                 elif isinstance(attr, collections.Sequence):
-                    data.append([cls._serialize(i) for i in attr])
+                    data.append([cls._serialize_internal(i) for i in attr])
                 elif isinstance(attr, collections.Mapping):
-                    data.append({k: cls._serialize(v) for k, v in attr.items()})
+                    data.append({k: cls._serialize_internal(v) for k, v in attr.items()})
                 else:
                     data.append(attr)
         return data
 
     @classmethod
     def _serialize_message(cls, msg):
-        return msgpack.packb(cls._serialize(msg), use_bin_type=True, encoding='utf-8')
+        return msgpack.packb(cls._serialize_internal(msg), use_bin_type=True, encoding='utf-8')
 
     @classmethod
     def _encrypt_message(cls, raw, key):
@@ -217,6 +228,13 @@ class MessageEncoder(object):
 
     @classmethod
     def encode(cls, msg, encryption=None):
+        """
+        Encode a message to bytes
+        :param msg:
+        :param encryption:
+        :return:
+        """
+
         # serialize the message
         raw = cls._serialize_message(msg)
 
@@ -224,7 +242,7 @@ class MessageEncoder(object):
 
         # encrypt message
         if encryption is not None:
-            flags = flags | MESSAGE_FLAG_ENCRYPT
+            flags |= MESSAGE_FLAG_ENCRYPT
             raw = cls._encrypt_message(raw, key=encryption)
 
         # calculate message checksum
@@ -238,7 +256,7 @@ class MessageEncoder(object):
         return header + raw
 
 
-class InternetAddress(BaseMessage):
+class InternetAddress(_BaseMessage):
     _fields_ = [
         "addr_v4",
         "addr_v6",
@@ -313,12 +331,18 @@ class AckMessage(Message):
         "sender"
     ]
 
+    def __str__(self):
+        return "<%s seq=%s>" % (self.__class__.__name__, self.seq)
+
 
 class NackMessage(Message):
     _fields_ = [
         "seq",
         "sender"
     ]
+
+    def __str__(self):
+        return "<%s seq=%s>" % (self.__class__.__name__, self.seq)
 
 
 class SuspectMessage(Message):
@@ -357,7 +381,7 @@ class AliveMessage(Message):
         return "<%s %s>" % (self.__class__.__name__, self.node)
 
 
-class RemoteNodeState(BaseMessage):
+class RemoteNodeState(_BaseMessage):
     _fields_ = [
         "node",
         ("addr", InternetAddress),

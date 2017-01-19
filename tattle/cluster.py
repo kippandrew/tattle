@@ -537,14 +537,14 @@ class Cluster(object):
 
     def _decode_message(self, raw):
         try:
-            msg = messages.MessageDecoder.decode(raw, encryption=[self.config.encryption_key])
+            msg = messages.MessageSerializer.decode(raw, encryption=[self.config.encryption_key])
             return msg
         except messages.MessageDecodeError as e:
             LOG.error("Error decoding message: %s", e)
             return
 
     def _encode_message(self, msg):
-        data = messages.MessageEncoder.encode(msg, encryption=self.config.encryption_key)
+        data = messages.MessageSerializer.encode(msg, encryption=self.config.encryption_key)
         LOG.trace("Encoded message: %s (%d bytes)", msg, len(data))
         return data
 

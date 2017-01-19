@@ -37,7 +37,7 @@ class NodeManagerTestCase(asynctest.TestCase):
 
         expected_message = messages.AliveMessage('node-1', messages.InternetAddress('127.0.0.1', 7801), 2)
 
-        self.queue.push.assert_called_with('node-1', messages.MessageEncoder.encode(expected_message))
+        self.queue.push.assert_called_with('node-1', messages.MessageSerializer.encode(expected_message))
 
     async def test_suspect_node(self):
         await self.nodes.on_node_suspect('node-1', 1)
@@ -47,7 +47,7 @@ class NodeManagerTestCase(asynctest.TestCase):
         self.assertEqual(expected_node.status, state.NODE_STATUS_SUSPECT)
 
         expected_message = messages.SuspectMessage('node-1', 1, 'local-node')
-        self.queue.push.assert_called_with('node-1', messages.MessageEncoder.encode(expected_message))
+        self.queue.push.assert_called_with('node-1', messages.MessageSerializer.encode(expected_message))
 
     async def test_suspect_node_refute(self):
         await self.nodes.on_node_suspect('local-node', 1)
@@ -58,7 +58,7 @@ class NodeManagerTestCase(asynctest.TestCase):
 
         # suspecting the local node should be refuted (sand Alive)
         expected_message = messages.AliveMessage('local-node', messages.InternetAddress('127.0.0.1', 7800), 2)
-        self.queue.push.assert_called_with('local-node', messages.MessageEncoder.encode(expected_message))
+        self.queue.push.assert_called_with('local-node', messages.MessageSerializer.encode(expected_message))
 
     async def test_dead_node(self):
         await self.nodes.on_node_dead('node-1', 1)
@@ -69,7 +69,7 @@ class NodeManagerTestCase(asynctest.TestCase):
 
         expected_message = messages.DeadMessage('node-1', 1, 'local-node')
 
-        self.queue.push.assert_called_with('node-1', messages.MessageEncoder.encode(expected_message))
+        self.queue.push.assert_called_with('node-1', messages.MessageSerializer.encode(expected_message))
 
     async def test_alive_cancel_suspect(self):
         await self.nodes.on_node_suspect('node-1', 1)
