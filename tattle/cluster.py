@@ -512,12 +512,12 @@ class Cluster(object):
         Read a message from a stream asynchronously
         """
         buf = bytes()
-        data = await stream.read_async(messages.HEADER_LENGTH)
+        data = await stream.read_async(messages.MESSAGE_HEADER_LENGTH)
         if not data:
             return
         buf += data
-        length, _, _ = self._decode_message_header(buf)
-        buf += await stream.read_async(length - messages.HEADER_LENGTH)
+        length, _, _, = self._decode_message_header(buf)
+        buf += await stream.read_async(length - messages.MESSAGE_HEADER_LENGTH)
         return buf
 
     def _read_udp_message(self, stream):
@@ -525,26 +525,26 @@ class Cluster(object):
         Read a message from a UDP stream synchronously
         """
         buf = bytes()
-        buf += stream.read(messages.HEADER_LENGTH)
+        buf += stream.read(messages.MESSAGE_HEADER_LENGTH)
         if not buf:
             return None
-        length, _, _ = self._decode_message_header(buf)
-        buf += stream.read(length - messages.HEADER_LENGTH)
+        length, _, _, = self._decode_message_header(buf)
+        buf += stream.read(length - messages.MESSAGE_HEADER_LENGTH)
         return buf
 
     def _decode_message_header(self, raw):
-        return struct.unpack(messages.HEADER_FORMAT, raw)
+        return struct.unpack(messages.MESSAGE_HEADER_FORMAT, raw)
 
     def _decode_message(self, raw):
         try:
-            msg = messages.MessageDecoder.decode(raw)
+            msg = messages.MessageDecoder.decode(raw, encryption=[self.config.encryption_key])
             return msg
         except messages.MessageDecodeError as e:
             LOG.error("Error decoding message: %s", e)
             return
 
     def _encode_message(self, msg):
-        data = messages.MessageEncoder.encode(msg)
+        data = messages.MessageEncoder.encode(msg, encryption=self.config.encryption_key)
         LOG.trace("Encoded message: %s (%d bytes)", msg, len(data))
         return data
 

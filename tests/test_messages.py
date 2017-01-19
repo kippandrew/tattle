@@ -1,3 +1,4 @@
+import os
 import unittest
 
 from tattle import messages
@@ -42,3 +43,11 @@ class MessageDecoderTestCase(unittest.TestCase):
         orig = messages.PingRequestMessage(1, "node", messages.InternetAddress('host', 123), "sender")
         buf = messages.MessageEncoder.encode(orig)
         self.assertEqual(orig, messages.MessageDecoder.decode(buf))
+
+    def test_encode_encryption(self):
+
+        key = os.urandom(16)
+
+        orig = messages.PingMessage(1, "test")
+        buf = messages.MessageEncoder.encode(orig, encryption=key)
+        self.assertEqual(orig, messages.MessageDecoder.decode(buf, encryption=[key]))

@@ -6,8 +6,12 @@ import sys
 
 import msgpack
 
-HEADER_LENGTH = 9  # 4 for length, 1 for flags, 4 crc
-HEADER_FORMAT = '!IBL'
+from tattle import crypto
+
+MESSAGE_HEADER_LENGTH = 7  # 2 for length, 1 for flags, 4 crc
+MESSAGE_HEADER_FORMAT = '!HBL'  # network byte order is B/E
+
+MESSAGE_FLAG_ENCRYPT = 0x80
 
 
 class MessageError(Exception):
@@ -139,27 +143,44 @@ class MessageDecoder(object):
         return message
 
     @classmethod
-    def _deserialize(cls, raw):
+    def _deserialize_message(cls, raw):
         message = cls._deserialize_internal(msgpack.unpackb(raw, encoding='utf-8', use_list=True))
         return message
 
     @classmethod
-    def decode(cls, buf):
-        # TODO: encryption
-        # TODO: compression
-        if len(buf) <= HEADER_LENGTH:
-            raise MessageDecodeError("Message is too short")
-        length, flags, crc, = struct.unpack(HEADER_FORMAT, buf[0:HEADER_LENGTH])  # unpack header in network B/O
-        buf = buf[HEADER_LENGTH:]
-        expected = binascii.crc32(buf) & 0xffffffff  # https://docs.python.org/3/library/binascii.html#binascii.crc32
+    def _decrypt_message(cls, raw, keys):
+        return crypto.decrypt_data(raw, keys)
+
+    @classmethod
+    def _verify_checksum(cls, raw, crc):
+        expected = binascii.crc32(raw) & 0xffffffff  # https://docs.python.org/3/library/binascii.html#binascii.crc32
         if crc != expected:
             raise MessageChecksumError("Message checksum mismatch: 0x%X != 0x%X" % (crc, expected))
-        return cls._deserialize(buf)
+
+    @classmethod
+    def decode(cls, buf, encryption=None):
+
+        # unpack message header
+        if len(buf) <= MESSAGE_HEADER_LENGTH:
+            raise MessageDecodeError("Message is too short")
+        (length, flags, crc,) = struct.unpack(MESSAGE_HEADER_FORMAT, buf[0:MESSAGE_HEADER_LENGTH])
+
+        # unpack message body
+        raw = buf[MESSAGE_HEADER_LENGTH:]
+
+        # verify message checksum
+        cls._verify_checksum(raw, crc)
+
+        if flags & MESSAGE_FLAG_ENCRYPT == MESSAGE_FLAG_ENCRYPT:
+            raw = cls._decrypt_message(raw, keys=encryption)
+
+        # return the deserialized message
+        return cls._deserialize_message(raw)
 
 
 class MessageEncoder(object):
     @classmethod
-    def _serialize_internal(cls, msg):
+    def _serialize(cls, msg):
         # insert the name of the class
         data = [msg.__class__.__name__]
 
@@ -169,31 +190,51 @@ class MessageEncoder(object):
             attr = getattr(msg, field_name)
             if field_type is not None and attr is not None:
                 # if attr has a field type defined deserialize that field
-                data.extend(cls._serialize_internal(attr))
+                data.extend(cls._serialize(attr))
             else:
                 if isinstance(attr, str) or isinstance(attr, bytes):
                     data.append(attr)
                 elif isinstance(attr, collections.Sequence):
-                    data.append([cls._serialize_internal(i) for i in attr])
+                    data.append([cls._serialize(i) for i in attr])
                 elif isinstance(attr, collections.Mapping):
-                    data.append({k: cls._serialize_internal(v) for k, v in attr.items()})
+                    data.append({k: cls._serialize(v) for k, v in attr.items()})
                 else:
                     data.append(attr)
         return data
 
     @classmethod
-    def _serialize(cls, msg):
-        return msgpack.packb(cls._serialize_internal(msg), use_bin_type=True, encoding='utf-8')
+    def _serialize_message(cls, msg):
+        return msgpack.packb(cls._serialize(msg), use_bin_type=True, encoding='utf-8')
 
     @classmethod
-    def encode(cls, msg):
-        # TODO: encryption
-        # TODO: compression
-        raw = cls._serialize(msg)
+    def _encrypt_message(cls, raw, key):
+        return crypto.encrypt_data(raw, key)
+
+    @classmethod
+    def _compute_checksum(cls, raw):
         crc = binascii.crc32(raw) & 0xffffffff  # https://docs.python.org/3/library/binascii.html#binascii.crc32
+        return crc
+
+    @classmethod
+    def encode(cls, msg, encryption=None):
+        # serialize the message
+        raw = cls._serialize_message(msg)
+
         flags = 0
-        length = len(raw) + HEADER_LENGTH
-        header = struct.pack(HEADER_FORMAT, length, flags, crc)  # pack header in network B/O
+
+        # encrypt message
+        if encryption is not None:
+            flags = flags | MESSAGE_FLAG_ENCRYPT
+            raw = cls._encrypt_message(raw, key=encryption)
+
+        # calculate message checksum
+        crc = cls._compute_checksum(raw)
+
+        # calculate message length
+        length = len(raw) + MESSAGE_HEADER_LENGTH
+
+        # pack message header
+        header = struct.pack(MESSAGE_HEADER_FORMAT, length, flags, crc)
         return header + raw
 
 

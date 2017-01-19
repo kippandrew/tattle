@@ -109,6 +109,7 @@ def configure_node():
     cfg.node_name = 'node-%d' % last_node
     cfg.bind_port = 7900 + last_node
     cfg.api_port = 7800 + last_node
+    cfg.encryption_key = b'secretkey1234567'
     last_node += 1
     return cfg
 

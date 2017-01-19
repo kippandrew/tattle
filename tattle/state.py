@@ -402,7 +402,7 @@ class NodeManager(collections.Sequence, collections.Mapping):
         LOG.debug("Canceled suspect node: %s", node.name)
 
     def _send_broadcast(self, node, msg):
-        self._queue.push(node.name, messages.MessageEncoder.encode(msg))
+        self._queue.push(node.name, messages.MessageEncoder.encode(msg, encryption=self.config.encryption_key))
         LOG.trace("Queued message: %s", msg)
 
     def _broadcast_alive(self, node):

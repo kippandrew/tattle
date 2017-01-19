@@ -3,3 +3,4 @@ asyncstream==0.1
 msgpack-python==0.4.8
 netifaces==0.10.5
 requests==2.12.4
+cryptography==1.7.1

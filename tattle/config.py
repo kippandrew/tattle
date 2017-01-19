@@ -81,6 +81,11 @@ class Configuration(object):
         self.suspicion_min_timeout_multi = 5
         self.suspicion_max_timeout_multi = 6
 
+        self.encryption_key = None
+        """
+        Encryption key used for message encryption. Should be 128, 192, or 256 bits.
+        """
+
         self.__dict__.update(**settings)
 
 
