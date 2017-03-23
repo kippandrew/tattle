@@ -1,8 +1,7 @@
 import asyncio
-import asyncstream
-import asyncstream.factory
-import asynctest
 import socket
+
+import asynctest
 
 from tattle import network
 
@@ -134,8 +133,8 @@ class UDPListenerTestCase(AbstractListenerTestCase):
 
 
 class TCPListenerTestCase(AbstractListenerTestCase):
-    async def _handle_tcp_stream(self, stream, addr):
-        data = await stream.read_async(255)
+    async def _handle_tcp_stream(self, reader, writer, addr):
+        data = await reader.read(255)
         self.received.append((data, addr))
 
     async def test_receive_tcp_message(self):
@@ -145,11 +144,10 @@ class TCPListenerTestCase(AbstractListenerTestCase):
         await listener.start()
 
         # create a TCP connection
-        stream = await asyncstream.factory.Client().connect(*listener_addr)
-        writer = asyncstream.StreamWriter(stream)
+        reader,writer = await asyncio.open_connection(*listener_addr)
 
         # send message to listener
-        await writer.write(b'hello world')
+        writer.write(b'hello world')
 
         await asyncio.sleep(0.1)
 

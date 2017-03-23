@@ -5,8 +5,6 @@ import math
 import struct
 import time
 
-import asyncstream
-
 from tattle import config
 from tattle import logging
 from tattle import messages
@@ -37,23 +35,18 @@ class Cluster(object):
         Create a new instance of the Cluster class
         """
         self.config = config
-        self._loop = loop or asyncio.get_event_loop()
-        self._ping_seq = sequence.Sequence()
 
-        # init listeners
+        self._loop = loop or asyncio.get_event_loop()
+
         self._udp_listener = self._init_listener_udp()
         self._tcp_listener = self._init_listener_tcp()
 
-        # init queue
         self._queue = self._init_queue()
 
-        # initialize node manager
-        self._nodes = self._init_state()
+        self._nodes = self._init_nodes()
 
-        # init probe
         self._init_probe()
 
-        # init sync
         self._init_sync()
 
     def _init_listener_udp(self):
@@ -73,13 +66,14 @@ class Cluster(object):
     def _init_queue(self):
         return queue.BroadcastQueue()
 
-    def _init_state(self):
+    def _init_nodes(self):
         return state.NodeManager(self.config, self._queue, loop=self._loop)
 
     def _init_probe(self):
         self._probe_schedule = schedule.ScheduledCallback(self._do_probe, self.config.probe_interval, loop=self._loop)
         self._probe_index = 0
         self._probe_status = dict()
+        self._probe_seq = sequence.Sequence()
 
     def _init_sync(self):
         self._sync_schedule = schedule.ScheduledCallback(self._do_sync, self.config.sync_interval, loop=self._loop)
@@ -175,16 +169,6 @@ class Cluster(object):
             await self._probe_node_indirect(target_node, self.config.probe_indirect_nodes)
         else:
             await self._probe_node(target_node)
-
-    async def send(self, data):
-        """
-        Send an user message.
-
-        :return: None
-        """
-        msg = messages.UserMessage(data, self.local_node_name)
-        self._queue.push(None, self._encode_message(msg))
-        LOG.debug("Queued message: %s", msg)
 
     @property
     def members(self):
@@ -298,7 +282,7 @@ class Cluster(object):
         LOG.debug("Probing node: %s", target_node)
 
         # get a sequence number for the ping
-        next_seq = self._ping_seq.increment()
+        next_seq = self._probe_seq.increment()
 
         # start waiting for probe result
         waiter = self._wait_for_probe(next_seq)
@@ -400,7 +384,7 @@ class Cluster(object):
         LOG.debug("Probing node: %s indirectly via %s", target_node.name, indirect_node.name)
 
         # get a sequence number for the ping
-        next_seq = self._ping_seq.increment()
+        next_seq = self._probe_seq.increment()
 
         # start waiting for probe result
         waiter = self._wait_for_probe(next_seq)
@@ -449,7 +433,7 @@ class Cluster(object):
             LOG.warn("Unknown node status: %s", remote_state.status)
             return
 
-    async def _send_local_state(self, stream):
+    async def _send_local_state(self, stream_writer):
 
         # get local state
         local_state = []
@@ -464,7 +448,7 @@ class Cluster(object):
         LOG.trace("Sending local state %s", local_state)
 
         # send message
-        await stream.write_async(self._encode_message(messages.SyncMessage(remote_state=local_state)))
+        await self._send_tcp_message(messages.SyncMessage(remote_state=local_state), stream_writer)
 
     async def _sync_node(self, node_host, node_port):
         """
@@ -476,21 +460,21 @@ class Cluster(object):
             # connect to node
             LOG.debug("Connecting to node %s:%d", node_host, node_port)
             try:
-                connection = await asyncstream.Client(self._loop).connect(node_host, node_port)
+                stream_reader, stream_writer = await asyncio.open_connection(node_host, node_port, loop=self._loop)
             except Exception:
                 LOG.exception("Error connecting to node %s:%d", node_host, node_port)
                 return
 
             # send local state
             try:
-                await self._send_local_state(connection)
+                await self._send_local_state(stream_writer)
             except IOError:
                 LOG.exception("Error sending remote state")
                 return
 
             # read remote state
             try:
-                remote_sync_message = self._decode_message((await self._read_tcp_message(connection)))
+                remote_sync_message = self._decode_message((await self._read_tcp_message(stream_reader)))
             except IOError:
                 LOG.exception("Error receiving remote state")
                 return
@@ -509,31 +493,6 @@ class Cluster(object):
 
         return True
 
-    async def _read_tcp_message(self, stream):
-        """
-        Read a message from a stream asynchronously
-        """
-        buf = bytes()
-        data = await stream.read_async(messages.MESSAGE_HEADER_LENGTH)
-        if not data:
-            return
-        buf += data
-        length, _, _, = self._decode_message_header(buf)
-        buf += await stream.read_async(length - messages.MESSAGE_HEADER_LENGTH)
-        return buf
-
-    def _read_udp_message(self, stream):
-        """
-        Read a message from a UDP stream synchronously
-        """
-        buf = bytes()
-        buf += stream.read(messages.MESSAGE_HEADER_LENGTH)
-        if not buf:
-            return None
-        length, _, _, = self._decode_message_header(buf)
-        buf += stream.read(length - messages.MESSAGE_HEADER_LENGTH)
-        return buf
-
     def _decode_message_header(self, raw):
         return struct.unpack(messages.MESSAGE_HEADER_FORMAT, raw)
 
@@ -550,36 +509,19 @@ class Cluster(object):
         LOG.trace("Encoded message: %s (%d bytes)", msg, len(data))
         return data
 
-    async def _send_udp_message(self, host, port, msg):
-        LOG.trace("Sending %s to %s:%d", msg, host, port)
+    # ------------------- TCP Message Handling -------------------
 
-        # encode message
-        buf = bytes()
-        buf += self._encode_message(msg)
+    async def _handle_tcp_connection(self,
+                                     stream_reader: asyncio.streams.StreamReader,
+                                     stream_writer: asyncio.streams.StreamWriter,
+                                     client_addr):
 
-        # max_messages = len(self._nodes)
-        max_transmits = _calculate_transmit_limit(len(self._nodes), self.config.retransmit_multi)
-        max_bytes = 512 - len(buf)
-
-        # gather gossip messages (already encoded)
-        gossip = self._queue.fetch(max_transmits, max_bytes)
-        if gossip:
-            LOG.trace("Gossip message max-transmits: %d", max_transmits)
-
-        for g in gossip:
-            LOG.trace("Piggy-backing message %s to %s:%d", self._decode_message(g), host, port)
-            buf += g
-
-        # send message
-        self._udp_listener.sendto(buf, host, port)
-
-    async def _handle_tcp_connection(self, stream, client):
         try:
             # read until closed
             while True:
 
                 try:
-                    raw = await self._read_tcp_message(stream)
+                    raw = await self._read_tcp_message(stream_reader)
                 except IOError:
                     LOG.exception("Error reading stream")
                     break
@@ -593,18 +535,44 @@ class Cluster(object):
                     continue
 
                 # dispatch the message
-                await self._handle_tcp_message(message, client, stream)
+                await self._handle_tcp_message(message, stream_reader, stream_writer, client_addr)
 
         except Exception:
             LOG.exception("Error handling TCP stream")
             return
 
-    async def _handle_tcp_message(self, message, client, stream):
-        LOG.trace("Handling TCP message from %s", client)
+    async def _read_tcp_message(self, stream_reader: asyncio.streams.StreamReader):
+        """
+        Read a message from a stream asynchronously
+        """
+        buf = bytes()
+        data = await stream_reader.read(messages.MESSAGE_HEADER_LENGTH)
+        if not data:
+            return
+        buf += data
+        length, _, _, = self._decode_message_header(buf)
+        buf += await stream_reader.read(length - messages.MESSAGE_HEADER_LENGTH)
+        return buf
+
+    async def _send_tcp_message(self, message, stream_writer: asyncio.streams.StreamWriter):
+        """
+        Write a message to a stream asynchronously
+        """
+        LOG.trace("Sending %s", message)
+
+        # encode message
+        buf = bytes()
+        buf += self._encode_message(message)
+
+        # send message
+        stream_writer.write(buf)
+
+    async def _handle_tcp_message(self, message, stream_reader, stream_writer, client_addr):
+        LOG.trace("Handling TCP message from %s", client_addr)
         try:
             if isinstance(message, messages.SyncMessage):
                 # noinspection PyTypeChecker
-                await self._handle_sync_message(message, stream)
+                await self._handle_sync_message(message, stream_reader, stream_writer, client_addr)
             else:
                 LOG.warn("Unknown message type: %r", message.__class__)
                 return
@@ -612,7 +580,7 @@ class Cluster(object):
             LOG.exception("Error dispatching TCP message")
             return
 
-    async def _handle_sync_message(self, message, stream):
+    async def _handle_sync_message(self, message, stream_reader, stream_writer, client_addr):
         LOG.trace("Handling SYNC message: nodes=%s", message.nodes)
 
         # merge remote state
@@ -621,12 +589,26 @@ class Cluster(object):
 
         # reply with our state
         try:
-            await self._send_local_state(stream)
+            await self._send_local_state(stream_writer)
         except IOError:
             LOG.exception("Error sending remote state")
             return
 
-    async def _handle_udp_data(self, data, client):
+    # ------------------- UDP Message Handling -------------------
+
+    def _read_udp_message(self, reader):
+        """
+        Read a message from a UDP stream synchronously
+        """
+        buf = bytes()
+        buf += reader.read(messages.MESSAGE_HEADER_LENGTH)
+        if not buf:
+            return None
+        length, _, _, = self._decode_message_header(buf)
+        buf += reader.read(length - messages.MESSAGE_HEADER_LENGTH)
+        return buf
+
+    async def _handle_udp_data(self, data, client_addr):
         try:
 
             # create a buffered reader
@@ -650,32 +632,32 @@ class Cluster(object):
                     continue
 
                 # dispatch the message
-                await self._handle_udp_message(msg, client)
+                await self._handle_udp_message(msg, client_addr)
 
         except Exception:
             LOG.exception("Error handling UDP data")
             return
 
     # noinspection PyTypeChecker
-    async def _handle_udp_message(self, msg, client):
-        LOG.trace("Handling UDP message from %s:%d", *client)
+    async def _handle_udp_message(self, msg, client_addr):
+        LOG.trace("Handling UDP message from %s:%d", *client_addr)
         try:
             if isinstance(msg, messages.AliveMessage):
-                await self._handle_alive_message(msg, client)
+                await self._handle_alive_message(msg, client_addr)
             elif isinstance(msg, messages.SuspectMessage):
-                await self._handle_suspect_message(msg, client)
+                await self._handle_suspect_message(msg, client_addr)
             elif isinstance(msg, messages.DeadMessage):
-                await self._handle_dead_message(msg, client)
+                await self._handle_dead_message(msg, client_addr)
             elif isinstance(msg, messages.PingMessage):
-                await self._handle_ping_message(msg, client)
+                await self._handle_ping_message(msg, client_addr)
             elif isinstance(msg, messages.PingRequestMessage):
-                await self._handle_ping_request_message(msg, client)
+                await self._handle_ping_request_message(msg, client_addr)
             elif isinstance(msg, messages.AckMessage):
-                await self._handle_ack_message(msg, client)
+                await self._handle_ack_message(msg, client_addr)
             elif isinstance(msg, messages.NackMessage):
-                await self._handle_nack_message(msg, client)
+                await self._handle_nack_message(msg, client_addr)
             elif isinstance(msg, messages.UserMessage):
-                await self._handle_user_message(msg, client)
+                await self._handle_user_message(msg, client_addr)
             else:
                 LOG.warn("Unknown message type: %r", msg.__class__)
                 return
@@ -684,25 +666,25 @@ class Cluster(object):
             return
 
     # noinspection PyUnusedLocal
-    async def _handle_alive_message(self, msg, client):
+    async def _handle_alive_message(self, msg, client_addr):
         LOG.trace("Handling ALIVE message: node=%s", msg.node)
 
         await self._nodes.on_node_alive(msg.node, msg.incarnation, msg.addr.address, msg.addr.port)
 
     # noinspection PyUnusedLocal
-    async def _handle_suspect_message(self, msg, client):
+    async def _handle_suspect_message(self, msg, client_addr):
         LOG.trace("Handling SUSPECT message: node=%s", msg.node)
 
         await self._nodes.on_node_suspect(msg.node, msg.incarnation)
 
     # noinspection PyUnusedLocal
-    async def _handle_dead_message(self, msg, client):
+    async def _handle_dead_message(self, msg, client_addr):
         LOG.trace("Handling DEAD message: node=%s", msg.node)
 
         await self._nodes.on_node_dead(msg.node, msg.incarnation)
 
     # noinspection PyUnusedLocal
-    async def _handle_ping_message(self, msg, client):
+    async def _handle_ping_message(self, msg, client_addr):
         LOG.trace("Handling PING message: target=%s", msg.node)
 
         # ensure target node is local node
@@ -716,11 +698,11 @@ class Cluster(object):
         await self._send_udp_message(msg.sender_addr.address, msg.sender_addr.port, ack)
 
     # noinspection PyUnusedLocal
-    async def _handle_ping_request_message(self, msg, client):
+    async def _handle_ping_request_message(self, msg, client_addr):
         LOG.trace("Handling PING-REQ (%d): target=%s", msg.seq, msg.node)
 
         # get a sequence number for the ping
-        next_seq = self._ping_seq.increment()
+        next_seq = self._probe_seq.increment()
 
         # start waiting for probe result
         waiter = self._wait_for_probe(next_seq)
@@ -746,7 +728,7 @@ class Cluster(object):
             await self._forward_indirect_probe_result(msg)
 
     # noinspection PyUnusedLocal
-    async def _handle_ack_message(self, msg, client):
+    async def _handle_ack_message(self, msg, client_addr):
         LOG.trace("Handling ACK message (%d): sender=%s", msg.seq, msg.sender)
 
         # resolve pending probe
@@ -785,4 +767,25 @@ class Cluster(object):
     async def _handle_user_message(self, msg, client):
         LOG.trace("Handling USER message (%d bytes) sender=%s", len(msg.data), msg.sender)
 
-        # self._queue.
+    async def _send_udp_message(self, host, port, msg):
+        LOG.trace("Sending %s to %s:%d", msg, host, port)
+
+        # encode message
+        buf = bytes()
+        buf += self._encode_message(msg)
+
+        # max_messages = len(self._nodes)
+        max_transmits = _calculate_transmit_limit(len(self._nodes), self.config.retransmit_multi)
+        max_bytes = 512 - len(buf)
+
+        # gather gossip messages (already encoded)
+        gossip = self._queue.fetch(max_transmits, max_bytes)
+        if gossip:
+            LOG.trace("Gossip message max-transmits: %d", max_transmits)
+
+        for g in gossip:
+            LOG.trace("Piggy-backing message %s to %s:%d", self._decode_message(g), host, port)
+            buf += g
+
+        # send message
+        self._udp_listener.sendto(buf, host, port)

@@ -159,17 +159,17 @@ async def run():
     finally:
         dump_nodes()
 
-    # stop node3
-    node3.stop()
-    await asyncio.sleep(5)
-
-    timeout = 5
-    try:
-        await asyncio.wait_for(wait_until_converged(), timeout)
-    except asyncio.TimeoutError:
-        print("Failed to converge after {} seconds".format(timeout), file=sys.stderr)
-    finally:
-        dump_nodes()
+    # # stop node3
+    # node3.stop()
+    # await asyncio.sleep(5)
+    #
+    # timeout = 5
+    # try:
+    #     await asyncio.wait_for(wait_until_converged(), timeout)
+    # except asyncio.TimeoutError:
+    #     print("Failed to converge after {} seconds".format(timeout), file=sys.stderr)
+    # finally:
+    #     dump_nodes()
 
 
 # init logging

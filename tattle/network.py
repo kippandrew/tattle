@@ -2,8 +2,6 @@ import asyncio
 import ipaddress
 import socket
 
-import asyncstream
-import asyncstream.factory
 import netifaces
 
 from tattle import logging
@@ -57,7 +55,6 @@ class TCPListener(AbstractListener):
 
     def __init__(self, listen_address, listen_port, callback, loop=None):
         super().__init__(listen_address, listen_port, callback, loop)
-        self._server = asyncstream.factory.Server(self._handle_connection, loop=self._loop)
 
     @property
     def local_address(self):
@@ -72,15 +69,21 @@ class TCPListener(AbstractListener):
                 return s.getsockname()[1]
 
     async def start(self):
-        await self._server.listen(self._listen_address, self._listen_port)
+        self._server = await asyncio.start_server(self._handle_connection,
+                                                  self._listen_address,
+                                                  self._listen_port,
+                                                  loop=self._loop)
 
     async def stop(self):
         self._server.close()
 
-    async def _handle_connection(self, stream, addr):
+    async def _handle_connection(self, client_reader, client_writer):
+        # get client address from the underlying transport
+        addr = client_reader._transport.get_extra_info('peername')
+
         LOG.trace("Handing incoming TCP connection from: %s", addr)
 
-        self._run_callback(stream, addr)
+        self._run_callback(client_reader, client_writer, addr)
 
         LOG.trace("Finished handling TCP connection from: %s", addr)
 
