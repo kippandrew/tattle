@@ -1,6 +1,9 @@
 Tattle
 ------
 
+.. image:: https://travis-ci.org/kippandrew/tattle.svg?branch=master
+   :target: https://travis-ci.org/kippandrew/tattle
+
 Tattle is a Python 3.5+ implementation of the Scalable Weakly-consistent Infection-style Process Group Membership
 (SWIM) gossip protocol for managing cluster membership in a distributed Python application. The tattle library is
 designed to help developers create distributed applications in Python by providing a framework for managing
