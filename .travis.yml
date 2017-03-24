@@ -7,6 +7,11 @@ python:
   - "3.7-dev"
   - "nightly" # currently points to 3.7-dev
 
-install: "pip install -r dev-requirements.txt"
+install:
+  pip install -r dev-requirements.txt
+  pip install codeclimate-test-reporter
 
 script: nosetests tests/
+
+after_sucess:
+  - CODECLIMATE_REPO_TOKEN=014d64802d78519c2ee381d80b634ab286f29efa66e3ba04ca83f39d8573733a codeclimate-test-reporter
