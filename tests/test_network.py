@@ -144,7 +144,7 @@ class TCPListenerTestCase(AbstractListenerTestCase):
         await listener.start()
 
         # create a TCP connection
-        reader,writer = await asyncio.open_connection(*listener_addr)
+        reader, writer = await asyncio.open_connection(*listener_addr)
 
         # send message to listener
         writer.write(b'hello world')
