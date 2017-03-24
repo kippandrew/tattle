@@ -12,16 +12,18 @@ class NodeManagerTestCase(asynctest.TestCase):
     async def setUp(self):
         super(NodeManagerTestCase, self).setUp()
         self.queue = unittest.mock.Mock()
-        self.nodes = state.NodeManager(config.Configuration(), self.queue, self.loop)
+        self.events = unittest.mock.Mock()
+        self.nodes = state.NodeManager(config.Configuration(), self.queue, self.events, loop=self.loop)
 
         # create a local node
         await self.nodes.set_local_node('local-node', '127.0.0.1', 7800)
 
         # create other nodes
-        for n in range(4):
+        for n in range(3):
             await self.nodes.on_node_alive('node-{}'.format(n + 1), 1, '127.0.0.1', 7800 + n + 1)
 
         self.queue.reset_mock()
+        self.events.reset_mock()
 
     async def test_alive_local_node(self):
         await self.nodes.on_node_alive('local-node', 1, '127.0.0.1', 7801)
@@ -77,3 +79,28 @@ class NodeManagerTestCase(asynctest.TestCase):
 
         await self.nodes.on_node_alive('node-1', 2, '127.0.0.1', 7801)
         self.assertNotIn('node-1', self.nodes._suspect_nodes)
+
+    async def test_alive_event(self):
+        # node is alive
+        await self.nodes.on_node_alive('node-1', 2, '127.0.0.1', 7805)
+
+        # NEW node is alive
+        await self.nodes.on_node_alive('node-4', 2, '127.0.0.1', 7805)
+
+        self.events.emit.assert_called_once_with('node.alive', self.nodes['node-4'])
+
+    async def test_suspect_event(self):
+        # node is suspect
+        await self.nodes.on_node_suspect('node-1', 1)
+        await self.nodes.on_node_suspect('node-1', 1)
+        await self.nodes.on_node_suspect('node-1', 1)
+
+        self.events.emit.assert_called_once_with('node.suspect', self.nodes['node-1'])
+
+    async def test_dead_event(self):
+        # node is dead
+        await self.nodes.on_node_dead('node-1', 1)
+        await self.nodes.on_node_dead('node-1', 1)
+        await self.nodes.on_node_dead('node-1', 1)
+
+        self.events.emit.assert_called_once_with('node.dead', self.nodes['node-1'])

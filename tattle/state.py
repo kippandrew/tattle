@@ -119,17 +119,19 @@ class NodeManager(collections.Sequence, collections.Mapping):
     The NodeManager manages the membership state of the Cluster.
     """
 
-    def __init__(self, config, queue, loop=None):
+    def __init__(self, config, queue, events, loop=None):
         """
         Initialize instance of the NodeManager class
 
-        :param config: configu object
-        :type config: tattle.config.Configuration
+        :param config: config object
         :param queue: broadcast queue
+        :type config: tattle.config.Configuration
+        :type events: tattle.event.EventManager
         :type queue: tattle.queue.BroadcastQueue
         """
         self.config = config
         self._queue = queue
+        self._events = events
         self._loop = loop or asyncio.get_event_loop()
         self._leaving = False
         self._nodes = list()
@@ -182,17 +184,15 @@ class NodeManager(collections.Sequence, collections.Mapping):
     async def on_node_alive(self, name, incarnation, host, port, bootstrap=False):
         """
         Handle a Node alive notification
-
-        :param name:
-        :param incarnation:
-        :param host:
-        :param port:
-        :param bootstrap:
-        :return:
         """
 
         # acquire node lock
         with (await self._nodes_lock):
+
+            # # It is possible that during a leave, there is already an alive message in in the queue.
+            # # If that happens ignore it so we don't rejoin the cluster.
+            # if name == self.local_node.name and self._leaving:
+            #     return
 
             # check if this is a new node
             current_node = self._nodes_map.get(name)
@@ -209,7 +209,7 @@ class NodeManager(collections.Sequence, collections.Mapping):
                 # swap new node with a random node to ensure detection of failed node is bounded
                 self._swap_random_nodes()
 
-            LOG.trace("Node alive %s (current incarnation: %d, new incarnation: %d)",
+            LOG.debug("Node alive %s (current incarnation: %d, new incarnation: %d)",
                       current_node.name,
                       current_node.incarnation,
                       incarnation)
@@ -238,10 +238,7 @@ class NodeManager(collections.Sequence, collections.Mapping):
             if current_node.status == NODE_STATUS_SUSPECT:
                 await self._cancel_suspect_node(current_node)
 
-            # It is possible that during a leave, there is already an alive message in in the queue.
-            # If that happens ignore it so we don't rejoin the cluster.
-            if is_local_node and self._leaving:
-                return
+            old_status = current_node.status
 
             # update the current node status and incarnation number
             current_node.incarnation = incarnation
@@ -250,15 +247,15 @@ class NodeManager(collections.Sequence, collections.Mapping):
             # broadcast alive message
             self._broadcast_alive(current_node)
 
-            LOG.info("Node alive: %s (incarnation %d)", name, incarnation)
+            # emit 'node.alive' if node status changed
+            if old_status != NODE_STATUS_ALIVE:
+                self._events.emit('node.alive', current_node)
+
+                LOG.info("Node alive: %s (incarnation %d)", name, incarnation)
 
     async def on_node_dead(self, name, incarnation):
         """
         Handle a Node dead notification
-
-        :param name:
-        :param incarnation:
-        :return: None
         """
 
         # acquire node lock
@@ -272,7 +269,7 @@ class NodeManager(collections.Sequence, collections.Mapping):
 
             # return if node is dead
             if current_node.status == NODE_STATUS_DEAD:
-                LOG.trace("Ignoring dead node: %s", name)
+                LOG.trace("Ignoring DEAD node: %s", name)
                 return
 
             # return if the incarnation number is older then the current state
@@ -283,13 +280,15 @@ class NodeManager(collections.Sequence, collections.Mapping):
 
             # if this is about the local node, we need to refute. otherwise broadcast it
             if current_node is self.local_node and not self._leaving:
-                LOG.debug("Refuting DEAD message (incarnation=%d)", incarnation)
+                LOG.warn("Refuting DEAD message (incarnation=%d)", incarnation)
                 self._refute()
                 return
 
             # if the node is suspect, alive message cancels the suspicion
             if current_node.status == NODE_STATUS_SUSPECT:
                 await self._cancel_suspect_node(current_node)
+
+            old_status = current_node.status
 
             # update the current node status and incarnation number
             current_node.incarnation = incarnation
@@ -298,15 +297,15 @@ class NodeManager(collections.Sequence, collections.Mapping):
             # broadcast dead message
             self._broadcast_dead(current_node)
 
-            LOG.error("Node dead: %s (incarnation %d)", name, incarnation)
+            # emit 'node.dead' if node status changed
+            if old_status != NODE_STATUS_DEAD:
+                self._events.emit('node.dead', current_node)
+
+                LOG.error("Node dead: %s (incarnation %d)", name, incarnation)
 
     async def on_node_suspect(self, name, incarnation):
         """
         Handle a Node suspect notification
-
-        :param name:
-        :param incarnation:
-        :return:
         """
 
         # acquire node lock
@@ -331,7 +330,7 @@ class NodeManager(collections.Sequence, collections.Mapping):
 
             # if this is about the local node, we need to refute. otherwise broadcast it
             if current_node is self.local_node:
-                LOG.debug("Refuting SUSPECT message (incarnation=%d)", incarnation)
+                LOG.warn("Refuting SUSPECT message (incarnation=%d)", incarnation)
                 self._refute()  # don't mark ourselves suspect
                 return
 
@@ -339,6 +338,8 @@ class NodeManager(collections.Sequence, collections.Mapping):
             if current_node.status == NODE_STATUS_SUSPECT:
                 # TODO: confirm suspect node
                 pass
+
+            old_status = current_node.status
 
             # update the current node status and incarnation number
             current_node.incarnation = incarnation
@@ -350,7 +351,12 @@ class NodeManager(collections.Sequence, collections.Mapping):
             # broadcast suspect message
             self._broadcast_suspect(current_node)
 
-            LOG.warn("Node suspect: %s (incarnation %d)", name, incarnation)
+            # emit 'node.suspect' if node status changed
+            if old_status != NODE_STATUS_SUSPECT:
+                self._events.emit('node.suspect', current_node)
+
+            if old_status != NODE_STATUS_SUSPECT:
+                LOG.warn("Node suspect: %s (incarnation %d)", name, incarnation)
 
     async def _confirm_suspect_node(self, node):
         pass
@@ -426,7 +432,7 @@ class NodeManager(collections.Sequence, collections.Mapping):
 
         # increment local node incarnation
         self.local_node.incarnation = self._local_node_seq.increment()
-        LOG.trace("Refuting message (new incarnation %d)", self.local_node.incarnation)
+        LOG.debug("Refuting message (new incarnation %d)", self.local_node.incarnation)
 
         # broadcast alive message
         self._broadcast_alive(self.local_node)
