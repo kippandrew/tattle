@@ -31,19 +31,14 @@ def get_logger(name, level=None):
     return logger
 
 
-def init_logger(level=logging.DEBUG):
-    # clear existing handlers
-    logging._handlers = []
-
-    # configure root logger
-    logger = logging.getLogger()
+def init_logger(log='tattle', level=logging.DEBUG):
+    log = logging.getLogger(log)
     formatter = ConsoleLogFormatter('[%(threadName)s] [%(asctime)s] [$LEVEL%(name)s$RESET] %(message)s')
     handler = logging.StreamHandler(stream=sys.stdout)
     handler.setFormatter(formatter)
-    handler.setLevel(level)
-    logger.setLevel(logging.NOTSET)
-    logger.addHandler(handler)
-    return logger
+    log.setLevel(level)
+    log.addHandler(handler)
+    return log
 
 
 class ConsoleLogFormatter(logging.Formatter):
