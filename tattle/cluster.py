@@ -6,6 +6,7 @@ import struct
 import time
 
 from tattle import config
+from tattle import event
 from tattle import logging
 from tattle import messages
 from tattle import network
@@ -41,6 +42,8 @@ class Cluster(object):
         self._udp_listener = self._init_listener_udp()
         self._tcp_listener = self._init_listener_tcp()
 
+        self._events = self._init_events()
+
         self._queue = self._init_queue()
 
         self._nodes = self._init_nodes()
@@ -66,8 +69,11 @@ class Cluster(object):
     def _init_queue(self):
         return queue.BroadcastQueue()
 
+    def _init_events(self):
+        return event.EventManager()
+
     def _init_nodes(self):
-        return state.NodeManager(self.config, self._queue, loop=self._loop)
+        return state.NodeManager(self.config, self._queue, self._events, loop=self._loop)
 
     def _init_probe(self):
         self._probe_schedule = schedule.ScheduledCallback(self._do_probe, self.config.probe_interval, loop=self._loop)
