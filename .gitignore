@@ -51,4 +51,3 @@ nosetests-docker.logs
 
 # Sphinx docs
 docs/_build/
-/coverage.xml
