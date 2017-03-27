@@ -19,31 +19,29 @@ designed to help developers create distributed applications in Python by providi
 cluster membership, disseminating member status, and detecting member failures. In addition to managing
 cluster membership tattle can be used to disseminate arbitrary messages throughout the cluster.
 
-Tattle can be used as both a library or as standalone process. When using tattle as a standalone process,
-a REST-ful API is provided to manage the cluster.
+Usage (node.py)::
 
-Example Code (node.py)::
-
-    #!/usr/bin/env python3.5
     import sys
     import asyncio
     import tattle
 
-    async def start_node():
-        node tattle.Cluster(tattle.Configuration(bind_port=port)).start()
-        await node.start()
+    async def __main__():
 
+        # parse arguments
+        port = sys.argv[1]
+        join = sys.argv[2] if len(sys.argv) > 2 else None
+
+        # start node
+        node = await tattle.Cluster(tattle.Configuration(bind_port=port)).start()
+
+        # join cluster
         if join is not None:
             await node.join(tattle.parse_address(join))
-        return node
 
-    port = sys.argv[1]
-    join = sys.argv[2] if len(sys.argv) > 2 else None
-
-    asyncio.ensure_future(start_node(int(port), join)
+    asyncio.ensure_future(__main__())
 
 Running the Example::
 
-    python node.py 7901 &
-    python node.py 7902 localhost:7901 &
-    python node.py 7903 localhost:7901 &
+    python3 node.py 7901 &
+    python3 node.py 7902 localhost:7901 &
+    python3 node.py 7903 localhost:7901 &
