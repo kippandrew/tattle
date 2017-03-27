@@ -13,8 +13,6 @@ Tattle
    :target: https://codeclimate.com/github/kippandrew/tattle/coverage
    :alt: Test Coverage
 
-`Python <http://www.python.org/>`_
-
 Tattle is a Python 3.5+ implementation of the `Scalable Weakly-consistent Infection-style Process Group Membership <docs/swim.pdf>`_
 (SWIM) gossip protocol for managing cluster membership in a distributed Python application. The tattle library is
 designed to help developers create distributed applications in Python by providing a framework for managing
