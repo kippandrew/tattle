@@ -183,6 +183,26 @@ class Cluster(object):
         """
         return sorted(self._nodes, key=lambda n: n.name)
 
+    def subscribe(self, event, handler):
+        """
+        Add a handler to an event
+
+        :param event:
+        :param handler:
+        :return: None
+        """
+        return self._events.on(event, handler)
+
+    def unsubscribe(self, event, handler):
+        """
+        Remove an handler from an event
+
+        :param event: event
+        :param handler: handler function
+        :return: None
+        """
+        return self._events.off(event, handler)
+
     @property
     def local_node_address(self):
         """
