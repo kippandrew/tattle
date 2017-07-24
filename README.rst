@@ -19,7 +19,8 @@ designed to help developers create distributed applications in Python by providi
 cluster membership, disseminating member status, and detecting member failures. In addition to managing
 cluster membership tattle can be used to disseminate arbitrary messages throughout the cluster.
 
-Usage (node.py)::
+.. code-block:: python
+    :caption: node.py
 
     import sys
     import asyncio
