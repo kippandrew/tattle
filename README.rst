@@ -20,7 +20,6 @@ cluster membership, disseminating member status, and detecting member failures. 
 cluster membership tattle can be used to disseminate arbitrary messages throughout the cluster.
 
 .. code-block:: python
-    :caption: node.py
 
     import sys
     import asyncio
